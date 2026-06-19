@@ -80,7 +80,7 @@ def test_static_and_index_are_not_cached():
         response = client.get("/")
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
-        assert "static/styles.css?v=20260620-ui2" in response.text
+        assert "static/styles.css?v=20260620-ui3" in response.text
 
         response = client.get("/static/styles.css")
         assert response.status_code == 200

@@ -52,12 +52,26 @@ function render() {
   const rows = filteredServers();
   $("serverRows").innerHTML = rows.length
     ? rows.map(rowHtml).join("")
-    : `<tr><td colspan="5" class="text-secondary text-center py-5">暂无服务器</td></tr>`;
+    : `<tr><td colspan="6" class="text-secondary text-center py-5">暂无服务器</td></tr>`;
 
   document.querySelectorAll(".ops-row").forEach((el) => {
     el.addEventListener("click", () => {
       state.selectedId = Number(el.dataset.id);
       render();
+    });
+  });
+  document.querySelectorAll("[data-row-action]").forEach((el) => {
+    el.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      const id = Number(el.closest(".ops-row")?.dataset.id);
+      const server = state.servers.find((item) => item.id === id);
+      if (!server) return;
+      state.selectedId = server.id;
+      if (el.dataset.rowAction === "edit") openForm(server);
+      if (el.dataset.rowAction === "check") {
+        await api(`/api/servers/${server.id}/check`, { method: "POST" });
+        await loadAll();
+      }
     });
   });
 
@@ -75,6 +89,7 @@ function render() {
   $("metricChecked").textContent = `${checked} 台有检查记录`;
   $("summaryText").textContent = `${rows.length} 台可见，${online} 台在线`;
   $("tableCount").textContent = `${rows.length} 台可见`;
+  $("assetFooterCount").textContent = `共 ${rows.length} 条`;
   $("summaryOnlineBadge").textContent = `${online} online`;
 
   renderDetail();
@@ -101,6 +116,12 @@ function rowHtml(s) {
       </td>
       <td data-label="状态"><span class="status ${escapeHtml(s.last_status)}">${escapeHtml(s.last_status)}</span></td>
       <td data-label="最近检查"><span class="server-sub">${escapeHtml(s.last_checked_at ? s.last_checked_at.slice(0, 16) : "未检查")}</span></td>
+      <td data-label="操作">
+        <div class="row-actions">
+          <button class="btn btn-light btn-icon btn-sm" type="button" title="检查 SSH" data-row-action="check"><i class="ti ti-activity-heartbeat"></i></button>
+          <button class="btn btn-light btn-icon btn-sm" type="button" title="编辑" data-row-action="edit"><i class="ti ti-pencil"></i></button>
+        </div>
+      </td>
     </tr>`;
 }
 
@@ -122,11 +143,15 @@ function renderDetail() {
   $("detailStatus").className = `status ${s.last_status}`;
   $("detailIpv4").textContent = s.ipv4 || "未设置";
   $("detailIpv6").textContent = s.ipv6 || "未设置";
+  $("detailLoginUser").textContent = s.login_user || "未设置";
+  $("detailAuthType").textContent = authLabel(s.auth_type);
   $("detailServiceCode").textContent = s.service_code || "未设置";
   $("detailProviderRegion").textContent = [s.provider, s.region].filter(Boolean).join(" / ") || "未设置";
-  $("detailAuth").textContent = `${s.login_user} / ${authLabel(s.auth_type)}`;
   $("detailTags").innerHTML = (s.tags || []).map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join("") || "未设置";
   $("detailNotes").textContent = s.notes || "无";
+  $("detailCreated").textContent = formatDateTime(s.created_at);
+  $("detailUpdated").textContent = formatDateTime(s.updated_at);
+  $("detailCheckedAt").textContent = formatDateTime(s.last_checked_at);
   $("sshCommand").textContent = `ssh ${s.login_user}@${s.hostname}`;
 }
 
@@ -135,12 +160,13 @@ function renderAudit() {
     ? state.audit.map((a) => `
       <tr>
         <td data-label="操作者">${escapeHtml(a.actor)}</td>
-        <td data-label="动作">${escapeHtml(a.action)}</td>
+        <td data-label="动作"><span class="audit-action ${escapeHtml(a.action)}">${escapeHtml(actionLabel(a.action))}</span></td>
         <td data-label="对象">${escapeHtml(a.target_type)} #${escapeHtml(a.target_id || "")}</td>
+        <td data-label="详情">${escapeHtml(a.detail || "无")}</td>
         <td data-label="时间">${escapeHtml((a.created_at || "").slice(0, 19))}</td>
       </tr>
     `).join("")
-    : `<tr><td colspan="4" class="text-secondary text-center py-4">暂无审计记录</td></tr>`;
+    : `<tr><td colspan="5" class="text-secondary text-center py-4">暂无审计记录</td></tr>`;
 }
 
 function openForm(server = null) {
@@ -180,6 +206,21 @@ function authLabel(value) {
   return value === "key" ? "SSH Key" : "password";
 }
 
+function actionLabel(value) {
+  return {
+    login: "登录",
+    create: "创建",
+    update: "更新",
+    delete: "删除",
+    check: "检查",
+    reveal_credential: "查看凭据",
+  }[value] || value;
+}
+
+function formatDateTime(value) {
+  return value ? String(value).slice(0, 19) : "未记录";
+}
+
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
     "&": "&amp;",
@@ -213,6 +254,11 @@ $("refreshBtn").addEventListener("click", loadAll);
 $("addBtn").addEventListener("click", () => openForm());
 $("editBtn").addEventListener("click", () => openForm(selected()));
 $("searchBox").addEventListener("input", render);
+$("detailPanel").addEventListener("click", (event) => {
+  if (!event.target.closest(".detail-close")) return;
+  state.selectedId = null;
+  render();
+});
 $("closeDialog").addEventListener("click", () => $("serverDialog").close());
 $("cancelBtn").addEventListener("click", () => $("serverDialog").close());
 

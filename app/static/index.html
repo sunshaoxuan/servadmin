@@ -7,7 +7,7 @@
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230f766e'/%3E%3Ctext x='32' y='39' font-size='22' text-anchor='middle' font-family='Arial' font-weight='700' fill='white'%3ESD%3C/text%3E%3C/svg%3E" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0-beta20/dist/css/tabler.min.css" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.28.1/dist/tabler-icons.min.css" />
-    <link rel="stylesheet" href="static/styles.css?v=20260620-ui2" />
+    <link rel="stylesheet" href="static/styles.css?v=20260620-ui3" />
   </head>
   <body>
     <main id="loginView" class="login-screen">
@@ -62,24 +62,36 @@
 
         <section class="overview-strip">
           <div class="metric-card">
-            <span>总数</span>
-            <strong id="metricTotal">0</strong>
-            <small id="tableCount">0 台可见</small>
+            <span class="metric-icon metric-total"><i class="ti ti-server-2"></i></span>
+            <div>
+              <span>总数</span>
+              <strong id="metricTotal">0</strong>
+              <small id="tableCount">0 台可见</small>
+            </div>
           </div>
           <div class="metric-card">
-            <span>在线</span>
-            <strong id="metricOnline">0</strong>
-            <small>SSH 可达</small>
+            <span class="metric-icon metric-online"><i class="ti ti-activity-heartbeat"></i></span>
+            <div>
+              <span>在线</span>
+              <strong id="metricOnline">0</strong>
+              <small>SSH 可达</small>
+            </div>
           </div>
           <div class="metric-card">
-            <span>待确认</span>
-            <strong id="metricUnknown">0</strong>
-            <small id="metricOffline">0 台离线</small>
+            <span class="metric-icon metric-pending"><i class="ti ti-clock-hour-4"></i></span>
+            <div>
+              <span>待确认</span>
+              <strong id="metricUnknown">0</strong>
+              <small id="metricOffline">0 台离线</small>
+            </div>
           </div>
           <div class="metric-card wide">
-            <span>最近检查</span>
-            <strong id="metricLast">无</strong>
-            <small id="metricChecked">状态刷新记录</small>
+            <span class="metric-icon metric-check"><i class="ti ti-calendar-check"></i></span>
+            <div>
+              <span>最近检查</span>
+              <strong id="metricLast">无</strong>
+              <small id="metricChecked">状态刷新记录</small>
+            </div>
           </div>
         </section>
 
@@ -102,10 +114,20 @@
                       <th>登录</th>
                       <th>状态</th>
                       <th>最近检查</th>
+                      <th>操作</th>
                     </tr>
                   </thead>
                   <tbody id="serverRows"></tbody>
                 </table>
+              </div>
+              <div class="table-footer">
+                <span id="assetFooterCount">共 0 条</span>
+                <div class="pager">
+                  <button class="btn btn-light btn-icon" type="button" aria-label="上一页"><i class="ti ti-chevron-left"></i></button>
+                  <span class="page-current">1</span>
+                  <button class="btn btn-light btn-icon" type="button" aria-label="下一页"><i class="ti ti-chevron-right"></i></button>
+                  <span class="page-size">20 条/页 <i class="ti ti-chevron-down"></i></span>
+                </div>
               </div>
             </section>
 
@@ -123,6 +145,7 @@
                       <th>操作者</th>
                       <th>动作</th>
                       <th>对象</th>
+                      <th>详情</th>
                       <th>时间</th>
                     </tr>
                   </thead>
@@ -140,40 +163,49 @@
             <div id="detailPanel" class="detail-panel hidden">
               <div class="detail-head">
                 <div>
+                  <span id="detailStatus" class="status online detail-mini-status">online</span>
                   <h2 id="detailName"></h2>
                   <p id="detailHost"></p>
                 </div>
-                <span id="detailStatus" class="status unknown">unknown</span>
+                <button class="btn btn-light btn-icon detail-close" type="button" title="收起"><i class="ti ti-x"></i></button>
               </div>
 
               <div class="detail-tabs">
                 <span class="active">概览</span>
-                <span>连接</span>
-                <span>审计</span>
+                <span>凭据</span>
+                <span>检查历史</span>
+                <span>备注</span>
               </div>
 
               <dl class="facts">
                 <dt>IPv4</dt><dd id="detailIpv4"></dd>
                 <dt>IPv6</dt><dd id="detailIpv6"></dd>
+                <dt>登录用户</dt><dd id="detailLoginUser"></dd>
+                <dt>认证方式</dt><dd id="detailAuthType"></dd>
                 <dt>服务代码</dt><dd id="detailServiceCode"></dd>
                 <dt>供应商</dt><dd id="detailProviderRegion"></dd>
-                <dt>认证方式</dt><dd id="detailAuth"></dd>
                 <dt>标签</dt><dd id="detailTags"></dd>
                 <dt>备注</dt><dd id="detailNotes"></dd>
+                <dt>创建时间</dt><dd id="detailCreated"></dd>
+                <dt>更新时间</dt><dd id="detailUpdated"></dd>
+                <dt>最后检查</dt><dd id="detailCheckedAt"></dd>
               </dl>
 
-              <div class="command-box">
-                <div>
-                  <label>SSH</label>
-                  <span id="sshCommand"></span>
+              <div class="quick-card">
+                <h3>快速操作</h3>
+                <div class="detail-actions">
+                  <button id="checkBtn" class="btn btn-primary"><i class="ti ti-plug-connected"></i>检查 SSH</button>
+                  <button id="editBtn" class="btn btn-light"><i class="ti ti-pencil"></i>编辑</button>
+                  <button id="revealBtn" class="btn btn-danger-lt"><i class="ti ti-key"></i>查看凭据</button>
                 </div>
-                <button id="copySshBtn" class="btn btn-light btn-icon" title="复制"><i class="ti ti-copy"></i></button>
               </div>
 
-              <div class="detail-actions">
-                <button id="checkBtn" class="btn btn-primary"><i class="ti ti-plug-connected"></i>检查 SSH</button>
-                <button id="editBtn" class="btn btn-light"><i class="ti ti-pencil"></i>编辑</button>
-                <button id="revealBtn" class="btn btn-danger-lt"><i class="ti ti-key"></i>查看凭据</button>
+              <div class="command-box">
+                <h3>SSH 连接</h3>
+                <div class="ssh-line">
+                  <span id="sshCommand"></span>
+                  <button id="copySshBtn" class="btn btn-light btn-icon" title="复制"><i class="ti ti-copy"></i></button>
+                </div>
               </div>
               <div id="credentialBox" class="credential hidden"></div>
             </div>
@@ -212,6 +244,6 @@
       </form>
     </dialog>
 
-    <script src="static/app.js?v=20260620-ui2"></script>
+    <script src="static/app.js?v=20260620-ui3"></script>
   </body>
 </html>

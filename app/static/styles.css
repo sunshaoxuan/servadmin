@@ -6,6 +6,9 @@
   --muted: #687a76;
   --accent: #0f766e;
   --accent-strong: #0b5d56;
+  --green: #32b84b;
+  --orange: #f59f00;
+  --blue: #2563eb;
   --sidebar: #0d241f;
   --sidebar-soft: #173b34;
   --danger: #b42318;
@@ -86,6 +89,9 @@ label {
   height: 34px;
   width: 34px;
 }
+.brand-row .brand-mark.small {
+  box-shadow: 0 10px 22px rgba(15, 118, 110, 0.32);
+}
 .stack { display: grid; gap: 16px; }
 .error { color: var(--danger); font-size: 13px; min-height: 20px; }
 
@@ -95,7 +101,9 @@ label {
   min-height: 100vh;
 }
 .ops-sidebar {
-  background: var(--sidebar);
+  background:
+    linear-gradient(180deg, rgba(2, 68, 64, 0.58), rgba(8, 38, 33, 0) 38%),
+    var(--sidebar);
   color: #eef7f5;
   display: flex;
   flex-direction: column;
@@ -132,7 +140,7 @@ label {
 .nav-item i { font-size: 19px; }
 .nav-item.active,
 .nav-item:hover {
-  background: var(--sidebar-soft);
+  background: linear-gradient(90deg, #0f766e, var(--sidebar-soft));
   color: #fff;
 }
 .sidebar-foot {
@@ -191,14 +199,20 @@ label {
   grid-template-columns: repeat(3, minmax(150px, 1fr)) minmax(220px, 1.3fr);
 }
 .metric-card {
+  align-items: center;
   background: #fff;
   border: 1px solid var(--line);
   border-radius: 8px;
   box-shadow: 0 6px 18px rgba(18, 38, 34, 0.04);
+  display: flex;
+  gap: 18px;
   min-height: 88px;
-  padding: 14px 16px;
+  padding: 16px 18px;
 }
-.metric-card span {
+.metric-card > div {
+  min-width: 0;
+}
+.metric-card > div > span {
   color: var(--muted);
   display: block;
   font-size: 12px;
@@ -215,11 +229,30 @@ label {
   display: block;
   margin-top: 6px;
 }
+.metric-icon {
+  align-items: center;
+  border-radius: 999px;
+  color: #fff;
+  display: inline-flex;
+  flex: 0 0 54px;
+  font-size: 26px;
+  height: 54px;
+  justify-content: center;
+  margin: 0;
+  width: 54px;
+}
+.metric-icon i {
+  font-size: 26px;
+}
+.metric-total { background: var(--accent); }
+.metric-online { background: var(--green); }
+.metric-pending { background: var(--orange); }
+.metric-check { background: #d3d8dd; color: #27323a; }
 .main-grid {
   align-items: start;
   display: grid;
   gap: 14px;
-  grid-template-columns: minmax(620px, 1fr) 382px;
+  grid-template-columns: minmax(650px, 1fr) 360px;
 }
 .left-column {
   display: grid;
@@ -265,11 +298,20 @@ label {
   letter-spacing: 0;
   text-transform: uppercase;
 }
+.ops-table th:nth-child(1) { width: 28%; }
+.ops-table th:nth-child(2) { width: 27%; }
+.ops-table th:nth-child(3) { width: 12%; }
+.ops-table th:nth-child(4) { width: 12%; }
+.ops-table th:nth-child(5) { width: 12%; }
+.ops-table th:nth-child(6) { width: 9%; }
 .ops-row {
   cursor: pointer;
 }
 .ops-row.active td {
   background: #eefaf7;
+}
+.ops-row.active td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 .ops-row:hover td {
   background: #f6fbfa;
@@ -293,7 +335,8 @@ label {
   display: block;
   font-weight: 750;
   max-width: 260px;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 .tags {
   display: flex;
@@ -324,6 +367,46 @@ label {
 .status.online { background: #dff7ed; color: #0f6b47; }
 .status.offline { background: #ffe8e6; color: var(--danger); }
 .status.unknown { background: #fff4d8; color: var(--amber); }
+.row-actions {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.table-footer {
+  align-items: center;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  display: flex;
+  font-size: 12px;
+  justify-content: space-between;
+  padding: 12px 16px;
+}
+.pager {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+.page-current {
+  background: var(--accent);
+  border-radius: 6px;
+  color: #fff;
+  display: inline-flex;
+  font-weight: 800;
+  justify-content: center;
+  min-width: 34px;
+  padding: 7px 10px;
+}
+.page-size {
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: #33443f;
+  display: inline-flex;
+  font-weight: 650;
+  gap: 4px;
+  padding: 7px 10px;
+}
 .detail-card {
   padding: 0;
 }
@@ -360,6 +443,13 @@ label {
   margin: 0;
   overflow-wrap: anywhere;
 }
+.detail-mini-status {
+  margin-bottom: 10px;
+  min-width: auto;
+}
+.detail-close {
+  flex: 0 0 auto;
+}
 .detail-tabs {
   border-bottom: 1px solid var(--line);
   display: flex;
@@ -389,25 +479,25 @@ label {
   margin: 0;
   overflow-wrap: anywhere;
 }
+.quick-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+.quick-card h3,
+.command-box h3 {
+  font-size: 14px;
+  margin: 0;
+}
 .command-box {
-  align-items: center;
   background: #f7fbfa;
   border: 1px solid var(--line);
   border-radius: 8px;
-  display: flex;
+  display: grid;
   gap: 10px;
-  padding: 10px;
-}
-.command-box div {
-  min-width: 0;
-  flex: 1;
-}
-.command-box label {
-  color: var(--muted);
-  display: block;
-  font-size: 11px;
-  font-weight: 800;
-  margin-bottom: 4px;
+  padding: 14px;
 }
 .command-box span {
   display: block;
@@ -415,6 +505,19 @@ label {
   font-size: 11px;
   line-height: 1.4;
   overflow-wrap: anywhere;
+}
+.ssh-line {
+  align-items: center;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  display: flex;
+  gap: 10px;
+  padding: 8px 8px 8px 10px;
+}
+.ssh-line span {
+  flex: 1;
+  min-width: 0;
 }
 .detail-actions {
   display: flex;
@@ -438,6 +541,31 @@ label {
 .audit-table td {
   color: #5c6d69;
   font-size: 12px;
+}
+.audit-action {
+  border-radius: 5px;
+  display: inline-flex;
+  font-weight: 800;
+  min-width: 44px;
+  padding: 3px 8px;
+}
+.audit-action.login,
+.audit-action.create {
+  background: #e3f7e8;
+  color: #16833a;
+}
+.audit-action.check {
+  background: #e8f2ff;
+  color: var(--blue);
+}
+.audit-action.update {
+  background: #fff4d8;
+  color: var(--amber);
+}
+.audit-action.delete,
+.audit-action.reveal_credential {
+  background: #fff1f0;
+  color: var(--danger);
 }
 dialog {
   border: 1px solid var(--line);
@@ -491,6 +619,14 @@ dialog::backdrop { background: rgba(10, 20, 18, 0.34); }
   .ops-workspace { padding: 14px; }
   .overview-strip { grid-template-columns: 1fr; }
   .metric-card { min-height: auto; }
+  .row-actions {
+    justify-content: flex-start;
+  }
+  .table-footer {
+    align-items: flex-start;
+    gap: 10px;
+    flex-direction: column;
+  }
   .ops-table thead,
   .audit-table thead {
     display: none;
