@@ -192,7 +192,7 @@ nav { display: grid; gap: 8px; }
   background: #f2faf8;
 }
 .server-title { font-weight: 800; display: block; margin-bottom: 4px; }
-.server-sub { color: var(--muted); font-size: 12px; }
+.server-sub { color: var(--muted); display: block; font-size: 12px; }
 .server-row strong { display: block; word-break: break-word; line-height: 1.35; }
 .tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
 .tag {
