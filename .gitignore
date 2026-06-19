@@ -6,6 +6,6 @@ data/
 .env
 *.db
 *.sqlite
+*.tar
 node_modules/
 dist/
-
