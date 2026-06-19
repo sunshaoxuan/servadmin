@@ -44,7 +44,7 @@ cd C:\workspace\server-admin-app
 
 部署目标路径建议为 `/opt/server-desk`，systemd 服务名为 `server-desk`，Nginx 反代到本机 `127.0.0.1:8090`。
 
-如果暂时没有域名，可以先通过 `http://ccnode.briconbric.com/server-desk/` 访问。生产使用建议解析独立域名并启用 HTTPS。
+当前部署路径为 `https://ccnode.briconbric.com/server-desk/`。Nginx 使用 `/etc/letsencrypt/live/briconbric.com/fullchain.pem` 和 `/etc/letsencrypt/live/briconbric.com/privkey.pem` 的通用证书。
 
 ## 首台服务器导入
 
