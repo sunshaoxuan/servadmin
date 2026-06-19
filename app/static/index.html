@@ -84,29 +84,53 @@
         </section>
 
         <section class="main-grid">
-          <section class="server-card card">
-            <div class="section-head">
-              <div>
-                <h2>服务器资产</h2>
-                <p id="summarySelection">选择服务器查看连接与凭据状态</p>
+          <div class="left-column">
+            <section class="server-card card">
+              <div class="section-head">
+                <div>
+                  <h2>服务器资产</h2>
+                  <p id="summarySelection">选择服务器查看连接与凭据状态</p>
+                </div>
+                <span class="badge bg-teal-lt" id="summaryOnlineBadge">0 online</span>
               </div>
-              <span class="badge bg-teal-lt" id="summaryOnlineBadge">0 online</span>
-            </div>
-            <div class="table-responsive">
-              <table class="table table-vcenter ops-table">
-                <thead>
-                  <tr>
-                    <th>服务器</th>
-                    <th>地址</th>
-                    <th>登录</th>
-                    <th>状态</th>
-                    <th>最近检查</th>
-                  </tr>
-                </thead>
-                <tbody id="serverRows"></tbody>
-              </table>
-            </div>
-          </section>
+              <div class="table-responsive">
+                <table class="table table-vcenter ops-table">
+                  <thead>
+                    <tr>
+                      <th>服务器</th>
+                      <th>地址</th>
+                      <th>登录</th>
+                      <th>状态</th>
+                      <th>最近检查</th>
+                    </tr>
+                  </thead>
+                  <tbody id="serverRows"></tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="audit-panel card">
+              <div class="section-head compact">
+                <div>
+                  <h2>最近操作</h2>
+                  <p>登录、检查、编辑和凭据查看都会记录在这里。</p>
+                </div>
+              </div>
+              <div class="table-responsive">
+                <table class="table table-sm table-vcenter audit-table">
+                  <thead>
+                    <tr>
+                      <th>操作者</th>
+                      <th>动作</th>
+                      <th>对象</th>
+                      <th>时间</th>
+                    </tr>
+                  </thead>
+                  <tbody id="auditRows"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
 
           <aside class="detail-card card">
             <div id="emptyState" class="empty-state">
@@ -154,28 +178,6 @@
               <div id="credentialBox" class="credential hidden"></div>
             </div>
           </aside>
-        </section>
-
-        <section class="audit-panel card">
-          <div class="section-head compact">
-            <div>
-              <h2>最近操作</h2>
-              <p>登录、检查、编辑和凭据查看都会记录在这里。</p>
-            </div>
-          </div>
-          <div class="table-responsive">
-            <table class="table table-sm table-vcenter audit-table">
-              <thead>
-                <tr>
-                  <th>操作者</th>
-                  <th>动作</th>
-                  <th>对象</th>
-                  <th>时间</th>
-                </tr>
-              </thead>
-              <tbody id="auditRows"></tbody>
-            </table>
-          </div>
         </section>
       </section>
     </main>

@@ -216,9 +216,14 @@ label {
   margin-top: 6px;
 }
 .main-grid {
+  align-items: start;
   display: grid;
   gap: 14px;
   grid-template-columns: minmax(620px, 1fr) 382px;
+}
+.left-column {
+  display: grid;
+  gap: 14px;
 }
 .card {
   background: var(--panel);
@@ -228,7 +233,6 @@ label {
 }
 .server-card,
 .detail-card {
-  min-height: 390px;
   overflow: hidden;
 }
 .section-head {
@@ -328,7 +332,7 @@ label {
   color: var(--muted);
   display: grid;
   gap: 8px;
-  min-height: 390px;
+  min-height: 220px;
   place-items: center;
   text-align: center;
 }
@@ -471,7 +475,17 @@ dialog::backdrop { background: rgba(10, 20, 18, 0.34); }
   .toolbar { flex-wrap: wrap; }
   .search-wrap { width: 100%; }
   .overview-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .main-grid { grid-template-columns: 1fr; }
+  .main-grid {
+    align-items: stretch;
+    display: flex;
+    flex-direction: column;
+  }
+  .left-column {
+    display: contents;
+  }
+  .server-card { order: 1; }
+  .detail-card { order: 2; }
+  .audit-panel { order: 3; }
 }
 @media (max-width: 640px) {
   .ops-workspace { padding: 14px; }
