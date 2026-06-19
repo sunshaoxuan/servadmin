@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Server Desk</title>
+    <link rel="stylesheet" href="static/styles.css" />
+  </head>
+  <body>
+    <main id="loginView" class="login-screen">
+      <section class="login-panel">
+        <div class="brand-mark">SD</div>
+        <h1>Server Desk</h1>
+        <p>集中维护服务器资产、登录信息、状态检查和操作记录。</p>
+        <form id="loginForm" class="stack">
+          <label>账号<input id="loginUser" autocomplete="username" value="admin" /></label>
+          <label>密码<input id="loginPassword" type="password" autocomplete="current-password" /></label>
+          <button type="submit">登录</button>
+          <div id="loginError" class="error"></div>
+        </form>
+      </section>
+    </main>
+
+    <main id="appView" class="app-shell hidden">
+      <aside class="sidebar">
+        <div class="brand-row"><div class="brand-mark small">SD</div><strong>Server Desk</strong></div>
+        <nav>
+          <button class="nav-item active">服务器</button>
+          <button class="nav-item">审计</button>
+          <button class="nav-item">设置</button>
+        </nav>
+        <div class="sidebar-foot">
+          <span id="whoami"></span>
+          <button id="logoutBtn" class="ghost">退出</button>
+        </div>
+      </aside>
+
+      <section class="workspace">
+        <header class="topbar">
+          <div>
+            <h1>服务器管理</h1>
+            <p id="summaryText">载入中</p>
+          </div>
+          <div class="actions">
+            <input id="searchBox" placeholder="搜索名称、IP、标签" />
+            <button id="refreshBtn" class="ghost">刷新</button>
+            <button id="addBtn">新增服务器</button>
+          </div>
+        </header>
+
+        <section class="metrics">
+          <div><span>总数</span><strong id="metricTotal">0</strong></div>
+          <div><span>在线</span><strong id="metricOnline">0</strong></div>
+          <div><span>待确认</span><strong id="metricUnknown">0</strong></div>
+          <div><span>最近检查</span><strong id="metricLast">无</strong></div>
+        </section>
+
+        <section class="content-grid">
+          <section class="server-list">
+            <div class="table-head">
+              <span>服务器</span>
+              <span>地址</span>
+              <span>登录</span>
+              <span>状态</span>
+            </div>
+            <div id="serverRows" class="rows"></div>
+          </section>
+
+          <aside class="inspector">
+            <div id="emptyState" class="empty-state">选择一台服务器查看详情</div>
+            <div id="detailPanel" class="hidden">
+              <div class="detail-head">
+                <div>
+                  <h2 id="detailName"></h2>
+                  <p id="detailHost"></p>
+                </div>
+                <span id="detailStatus" class="status unknown">unknown</span>
+              </div>
+              <dl class="facts">
+                <dt>IPv4</dt><dd id="detailIpv4"></dd>
+                <dt>IPv6</dt><dd id="detailIpv6"></dd>
+                <dt>服务代码</dt><dd id="detailServiceCode"></dd>
+                <dt>标签</dt><dd id="detailTags"></dd>
+                <dt>备注</dt><dd id="detailNotes"></dd>
+              </dl>
+              <div class="command-box">
+                <span id="sshCommand"></span>
+                <button id="copySshBtn" class="ghost">复制</button>
+              </div>
+              <div class="detail-actions">
+                <button id="checkBtn">检查 SSH</button>
+                <button id="editBtn" class="ghost">编辑</button>
+                <button id="revealBtn" class="danger-ghost">查看凭据</button>
+              </div>
+              <div id="credentialBox" class="credential hidden"></div>
+            </div>
+          </aside>
+        </section>
+
+        <section class="audit-panel">
+          <h2>最近操作</h2>
+          <div id="auditRows" class="audit-rows"></div>
+        </section>
+      </section>
+    </main>
+
+    <dialog id="serverDialog">
+      <form id="serverForm" method="dialog" class="server-form">
+        <div class="dialog-head">
+          <h2 id="dialogTitle">新增服务器</h2>
+          <button type="button" id="closeDialog" class="icon-btn">x</button>
+        </div>
+        <input type="hidden" id="serverId" />
+        <div class="form-grid">
+          <label>名称<input id="name" required /></label>
+          <label>主机名<input id="hostname" required /></label>
+          <label>IPv4<input id="ipv4" /></label>
+          <label>IPv6<input id="ipv6" /></label>
+          <label>供应商<input id="provider" /></label>
+          <label>区域<input id="region" /></label>
+          <label>登录用户<input id="login_user" required /></label>
+          <label>认证方式<select id="auth_type"><option value="password">密码</option><option value="key">密钥</option></select></label>
+          <label>服务代码<input id="service_code" /></label>
+          <label>标签<input id="tags" placeholder="prod, tokyo, web" /></label>
+        </div>
+        <label>凭据<input id="credential" type="password" placeholder="编辑时留空表示不修改" /></label>
+        <label>备注<textarea id="notes" rows="4"></textarea></label>
+        <div class="dialog-actions">
+          <button type="button" id="deleteBtn" class="danger-ghost hidden">删除</button>
+          <span class="spacer"></span>
+          <button type="button" id="cancelBtn" class="ghost">取消</button>
+          <button type="submit">保存</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="static/app.js"></script>
+  </body>
+</html>

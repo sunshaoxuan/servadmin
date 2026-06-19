@@ -1,0 +1,17 @@
+[Unit]
+Description=Server Desk operations app
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/server-desk
+EnvironmentFile=/etc/server-desk/server-desk.env
+ExecStart=/opt/server-desk/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8090
+Restart=always
+RestartSec=3
+User=serverdesk
+Group=serverdesk
+
+[Install]
+WantedBy=multi-user.target
+
