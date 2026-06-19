@@ -118,8 +118,15 @@ def health(conn=Depends(db)):
 
 
 @app.get("/api/me")
-def me(user=Depends(current_user)):
-    return user
+def me(request: Request, conn=Depends(db)):
+    token = request.cookies.get(SESSION_COOKIE, "")
+    user_id = session_codec().verify(token)
+    if not user_id:
+        return {"authenticated": False}
+    row = conn.execute("select id, username from users where id = ?", (user_id,)).fetchone()
+    if not row:
+        return {"authenticated": False}
+    return {**dict(row), "authenticated": True}
 
 
 @app.post("/api/login")

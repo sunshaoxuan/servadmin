@@ -64,6 +64,10 @@ def test_login_create_reveal_and_audit():
 def test_requires_login_for_servers():
     client, db_path = make_client()
     try:
+        response = client.get("/api/me")
+        assert response.status_code == 200
+        assert response.json() == {"authenticated": False}
+
         response = client.get("/api/servers")
         assert response.status_code == 401
     finally:

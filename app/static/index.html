@@ -4,6 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Server Desk</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230f766e'/%3E%3Ctext x='32' y='39' font-size='22' text-anchor='middle' font-family='Arial' font-weight='700' fill='white'%3ESD%3C/text%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0-beta20/dist/css/tabler.min.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.28.1/dist/tabler-icons.min.css" />
     <link rel="stylesheet" href="static/styles.css" />
   </head>
   <body>
@@ -15,60 +18,102 @@
         <form id="loginForm" class="stack">
           <label>账号<input id="loginUser" autocomplete="username" value="admin" /></label>
           <label>密码<input id="loginPassword" type="password" autocomplete="current-password" /></label>
-          <button type="submit">登录</button>
+          <button type="submit" class="btn btn-primary">登录</button>
           <div id="loginError" class="error"></div>
         </form>
       </section>
     </main>
 
-    <main id="appView" class="app-shell hidden">
-      <aside class="sidebar">
-        <div class="brand-row"><div class="brand-mark small">SD</div><strong>Server Desk</strong></div>
-        <nav>
-          <button class="nav-item active">服务器</button>
-          <button class="nav-item">审计</button>
-          <button class="nav-item">设置</button>
+    <main id="appView" class="ops-shell hidden">
+      <aside class="ops-sidebar">
+        <div class="brand-row">
+          <div class="brand-mark small">SD</div>
+          <div>
+            <strong>Server Desk</strong>
+            <span>Operations Console</span>
+          </div>
+        </div>
+        <nav class="nav-list">
+          <button class="nav-item active"><i class="ti ti-server-2"></i><span>服务器</span></button>
+          <button class="nav-item"><i class="ti ti-activity"></i><span>审计</span></button>
+          <button class="nav-item"><i class="ti ti-settings"></i><span>设置</span></button>
         </nav>
         <div class="sidebar-foot">
           <span id="whoami"></span>
-          <button id="logoutBtn" class="ghost">退出</button>
+          <button id="logoutBtn" class="btn btn-outline-light w-100">退出</button>
         </div>
       </aside>
 
-      <section class="workspace">
-        <header class="topbar">
+      <section class="ops-workspace">
+        <header class="page-bar">
           <div>
             <h1>服务器管理</h1>
             <p id="summaryText">载入中</p>
           </div>
-          <div class="actions">
-            <input id="searchBox" placeholder="搜索名称、IP、标签" />
-            <button id="refreshBtn" class="ghost">刷新</button>
-            <button id="addBtn">新增服务器</button>
+          <div class="toolbar">
+            <div class="search-wrap">
+              <i class="ti ti-search"></i>
+              <input id="searchBox" placeholder="搜索名称、IP、标签" />
+            </div>
+            <button id="refreshBtn" class="btn btn-light"><i class="ti ti-refresh"></i>刷新</button>
+            <button id="addBtn" class="btn btn-primary"><i class="ti ti-plus"></i>新增服务器</button>
           </div>
         </header>
 
-        <section class="metrics">
-          <div><span>总数</span><strong id="metricTotal">0</strong></div>
-          <div><span>在线</span><strong id="metricOnline">0</strong></div>
-          <div><span>待确认</span><strong id="metricUnknown">0</strong></div>
-          <div><span>最近检查</span><strong id="metricLast">无</strong></div>
+        <section class="overview-strip">
+          <div class="metric-card">
+            <span>总数</span>
+            <strong id="metricTotal">0</strong>
+            <small id="tableCount">0 台可见</small>
+          </div>
+          <div class="metric-card">
+            <span>在线</span>
+            <strong id="metricOnline">0</strong>
+            <small>SSH 可达</small>
+          </div>
+          <div class="metric-card">
+            <span>待确认</span>
+            <strong id="metricUnknown">0</strong>
+            <small id="metricOffline">0 台离线</small>
+          </div>
+          <div class="metric-card wide">
+            <span>最近检查</span>
+            <strong id="metricLast">无</strong>
+            <small id="metricChecked">状态刷新记录</small>
+          </div>
         </section>
 
-        <section class="content-grid">
-          <section class="server-list">
-            <div class="table-head">
-              <span>服务器</span>
-              <span>地址</span>
-              <span>登录</span>
-              <span>状态</span>
+        <section class="main-grid">
+          <section class="server-card card">
+            <div class="section-head">
+              <div>
+                <h2>服务器资产</h2>
+                <p id="summarySelection">选择服务器查看连接与凭据状态</p>
+              </div>
+              <span class="badge bg-teal-lt" id="summaryOnlineBadge">0 online</span>
             </div>
-            <div id="serverRows" class="rows"></div>
+            <div class="table-responsive">
+              <table class="table table-vcenter ops-table">
+                <thead>
+                  <tr>
+                    <th>服务器</th>
+                    <th>地址</th>
+                    <th>登录</th>
+                    <th>状态</th>
+                    <th>最近检查</th>
+                  </tr>
+                </thead>
+                <tbody id="serverRows"></tbody>
+              </table>
+            </div>
           </section>
 
-          <aside class="inspector">
-            <div id="emptyState" class="empty-state">选择一台服务器查看详情</div>
-            <div id="detailPanel" class="hidden">
+          <aside class="detail-card card">
+            <div id="emptyState" class="empty-state">
+              <i class="ti ti-server"></i>
+              <span>选择一台服务器查看详情</span>
+            </div>
+            <div id="detailPanel" class="detail-panel hidden">
               <div class="detail-head">
                 <div>
                   <h2 id="detailName"></h2>
@@ -76,30 +121,61 @@
                 </div>
                 <span id="detailStatus" class="status unknown">unknown</span>
               </div>
+
+              <div class="detail-tabs">
+                <span class="active">概览</span>
+                <span>连接</span>
+                <span>审计</span>
+              </div>
+
               <dl class="facts">
                 <dt>IPv4</dt><dd id="detailIpv4"></dd>
                 <dt>IPv6</dt><dd id="detailIpv6"></dd>
                 <dt>服务代码</dt><dd id="detailServiceCode"></dd>
+                <dt>供应商</dt><dd id="detailProviderRegion"></dd>
+                <dt>认证方式</dt><dd id="detailAuth"></dd>
                 <dt>标签</dt><dd id="detailTags"></dd>
                 <dt>备注</dt><dd id="detailNotes"></dd>
               </dl>
+
               <div class="command-box">
-                <span id="sshCommand"></span>
-                <button id="copySshBtn" class="ghost">复制</button>
+                <div>
+                  <label>SSH</label>
+                  <span id="sshCommand"></span>
+                </div>
+                <button id="copySshBtn" class="btn btn-light btn-icon" title="复制"><i class="ti ti-copy"></i></button>
               </div>
+
               <div class="detail-actions">
-                <button id="checkBtn">检查 SSH</button>
-                <button id="editBtn" class="ghost">编辑</button>
-                <button id="revealBtn" class="danger-ghost">查看凭据</button>
+                <button id="checkBtn" class="btn btn-primary"><i class="ti ti-plug-connected"></i>检查 SSH</button>
+                <button id="editBtn" class="btn btn-light"><i class="ti ti-pencil"></i>编辑</button>
+                <button id="revealBtn" class="btn btn-danger-lt"><i class="ti ti-key"></i>查看凭据</button>
               </div>
               <div id="credentialBox" class="credential hidden"></div>
             </div>
           </aside>
         </section>
 
-        <section class="audit-panel">
-          <h2>最近操作</h2>
-          <div id="auditRows" class="audit-rows"></div>
+        <section class="audit-panel card">
+          <div class="section-head compact">
+            <div>
+              <h2>最近操作</h2>
+              <p>登录、检查、编辑和凭据查看都会记录在这里。</p>
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm table-vcenter audit-table">
+              <thead>
+                <tr>
+                  <th>操作者</th>
+                  <th>动作</th>
+                  <th>对象</th>
+                  <th>时间</th>
+                </tr>
+              </thead>
+              <tbody id="auditRows"></tbody>
+            </table>
+          </div>
         </section>
       </section>
     </main>
@@ -108,7 +184,7 @@
       <form id="serverForm" method="dialog" class="server-form">
         <div class="dialog-head">
           <h2 id="dialogTitle">新增服务器</h2>
-          <button type="button" id="closeDialog" class="icon-btn">x</button>
+          <button type="button" id="closeDialog" class="btn btn-light btn-icon" title="关闭"><i class="ti ti-x"></i></button>
         </div>
         <input type="hidden" id="serverId" />
         <div class="form-grid">
@@ -126,10 +202,10 @@
         <label>凭据<input id="credential" type="password" placeholder="编辑时留空表示不修改" /></label>
         <label>备注<textarea id="notes" rows="4"></textarea></label>
         <div class="dialog-actions">
-          <button type="button" id="deleteBtn" class="danger-ghost hidden">删除</button>
+          <button type="button" id="deleteBtn" class="btn btn-danger-lt hidden">删除</button>
           <span class="spacer"></span>
-          <button type="button" id="cancelBtn" class="ghost">取消</button>
-          <button type="submit">保存</button>
+          <button type="button" id="cancelBtn" class="btn btn-light">取消</button>
+          <button type="submit" class="btn btn-primary">保存</button>
         </div>
       </form>
     </dialog>

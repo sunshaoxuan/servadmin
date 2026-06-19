@@ -32,6 +32,7 @@ async function loadAll() {
   state.servers = await api("/api/servers");
   state.audit = await api("/api/audit");
   if (!state.selectedId && state.servers.length) state.selectedId = state.servers[0].id;
+  if (state.selectedId && !state.servers.some((s) => s.id === state.selectedId)) state.selectedId = state.servers[0]?.id || null;
   render();
 }
 
@@ -39,7 +40,7 @@ function filteredServers() {
   const q = $("searchBox").value.trim().toLowerCase();
   if (!q) return state.servers;
   return state.servers.filter((s) => {
-    return [s.name, s.hostname, s.ipv4, s.ipv6, s.login_user, ...(s.tags || [])]
+    return [s.name, s.hostname, s.ipv4, s.ipv6, s.login_user, s.provider, s.region, ...(s.tags || [])]
       .filter(Boolean)
       .join(" ")
       .toLowerCase()
@@ -49,21 +50,33 @@ function filteredServers() {
 
 function render() {
   const rows = filteredServers();
-  $("serverRows").innerHTML = rows.map(rowHtml).join("") || `<div class="empty-state">暂无服务器</div>`;
-  document.querySelectorAll(".server-row").forEach((el) => {
+  $("serverRows").innerHTML = rows.length
+    ? rows.map(rowHtml).join("")
+    : `<tr><td colspan="5" class="text-secondary text-center py-5">暂无服务器</td></tr>`;
+
+  document.querySelectorAll(".ops-row").forEach((el) => {
     el.addEventListener("click", () => {
       state.selectedId = Number(el.dataset.id);
       render();
     });
   });
+
   const online = state.servers.filter((s) => s.last_status === "online").length;
+  const offline = state.servers.filter((s) => s.last_status === "offline").length;
   const unknown = state.servers.filter((s) => s.last_status === "unknown").length;
-  const last = state.servers.map((s) => s.last_checked_at).filter(Boolean).sort().pop() || "无";
+  const last = state.servers.map((s) => s.last_checked_at).filter(Boolean).sort().pop() || "";
+  const checked = state.servers.filter((s) => s.last_checked_at).length;
+
   $("metricTotal").textContent = state.servers.length;
   $("metricOnline").textContent = online;
   $("metricUnknown").textContent = unknown;
-  $("metricLast").textContent = last === "无" ? last : last.slice(0, 16);
+  $("metricOffline").textContent = `${offline} 台离线`;
+  $("metricLast").textContent = last ? last.slice(0, 16) : "无";
+  $("metricChecked").textContent = `${checked} 台有检查记录`;
   $("summaryText").textContent = `${rows.length} 台可见，${online} 台在线`;
+  $("tableCount").textContent = `${rows.length} 台可见`;
+  $("summaryOnlineBadge").textContent = `${online} online`;
+
   renderDetail();
   renderAudit();
 }
@@ -72,22 +85,35 @@ function rowHtml(s) {
   const active = s.id === state.selectedId ? "active" : "";
   const tags = (s.tags || []).slice(0, 3).map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join("");
   return `
-    <button class="server-row ${active}" data-id="${s.id}">
-      <span><span class="server-title">${escapeHtml(s.name)}</span><span class="server-sub">${escapeHtml(s.provider || "未设置")}</span><span class="tags">${tags}</span></span>
-      <span><strong>${escapeHtml(s.hostname)}</strong><span class="server-sub">${escapeHtml(s.ipv4 || s.ipv6 || "")}</span></span>
-      <span>${escapeHtml(s.login_user)}<span class="server-sub">${escapeHtml(s.auth_type)}</span></span>
-      <span class="status ${s.last_status}">${escapeHtml(s.last_status)}</span>
-    </button>`;
+    <tr class="ops-row ${active}" data-id="${s.id}">
+      <td>
+        <span class="server-title">${escapeHtml(s.name)}</span>
+        <span class="server-sub">${escapeHtml(s.provider || "未设置")}</span>
+        <span class="tags">${tags}</span>
+      </td>
+      <td data-label="地址">
+        <span class="server-host">${escapeHtml(s.hostname)}</span>
+        <span class="server-sub">${escapeHtml(s.ipv4 || s.ipv6 || "")}</span>
+      </td>
+      <td data-label="登录">
+        <strong>${escapeHtml(s.login_user)}</strong>
+        <span class="server-sub">${escapeHtml(authLabel(s.auth_type))}</span>
+      </td>
+      <td data-label="状态"><span class="status ${escapeHtml(s.last_status)}">${escapeHtml(s.last_status)}</span></td>
+      <td data-label="最近检查"><span class="server-sub">${escapeHtml(s.last_checked_at ? s.last_checked_at.slice(0, 16) : "未检查")}</span></td>
+    </tr>`;
 }
 
 function renderDetail() {
-  const s = state.servers.find((item) => item.id === state.selectedId);
+  const s = selected();
   $("credentialBox").classList.add("hidden");
   if (!s) {
+    $("summarySelection").textContent = "选择服务器查看连接与凭据状态";
     $("emptyState").classList.remove("hidden");
     $("detailPanel").classList.add("hidden");
     return;
   }
+  $("summarySelection").textContent = `当前选中：${s.name}`;
   $("emptyState").classList.add("hidden");
   $("detailPanel").classList.remove("hidden");
   $("detailName").textContent = s.name;
@@ -97,18 +123,24 @@ function renderDetail() {
   $("detailIpv4").textContent = s.ipv4 || "未设置";
   $("detailIpv6").textContent = s.ipv6 || "未设置";
   $("detailServiceCode").textContent = s.service_code || "未设置";
+  $("detailProviderRegion").textContent = [s.provider, s.region].filter(Boolean).join(" / ") || "未设置";
+  $("detailAuth").textContent = `${s.login_user} / ${authLabel(s.auth_type)}`;
   $("detailTags").innerHTML = (s.tags || []).map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join("") || "未设置";
   $("detailNotes").textContent = s.notes || "无";
   $("sshCommand").textContent = `ssh ${s.login_user}@${s.hostname}`;
 }
 
 function renderAudit() {
-  $("auditRows").innerHTML = state.audit.map((a) => `
-    <div class="audit-row">
-      <span>${escapeHtml(a.actor)} ${escapeHtml(a.action)} ${escapeHtml(a.target_type)} #${a.target_id || ""}</span>
-      <span>${escapeHtml((a.created_at || "").slice(0, 19))}</span>
-    </div>
-  `).join("") || `<div class="server-sub">暂无审计记录</div>`;
+  $("auditRows").innerHTML = state.audit.length
+    ? state.audit.map((a) => `
+      <tr>
+        <td data-label="操作者">${escapeHtml(a.actor)}</td>
+        <td data-label="动作">${escapeHtml(a.action)}</td>
+        <td data-label="对象">${escapeHtml(a.target_type)} #${escapeHtml(a.target_id || "")}</td>
+        <td data-label="时间">${escapeHtml((a.created_at || "").slice(0, 19))}</td>
+      </tr>
+    `).join("")
+    : `<tr><td colspan="4" class="text-secondary text-center py-4">暂无审计记录</td></tr>`;
 }
 
 function openForm(server = null) {
@@ -144,6 +176,10 @@ function selected() {
   return state.servers.find((s) => s.id === state.selectedId);
 }
 
+function authLabel(value) {
+  return value === "key" ? "SSH Key" : "password";
+}
+
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
     "&": "&amp;",
@@ -164,7 +200,7 @@ $("loginForm").addEventListener("submit", async (event) => {
     });
     showApp(user);
     await loadAll();
-  } catch (error) {
+  } catch {
     $("loginError").textContent = "登录失败";
   }
 });
@@ -224,8 +260,12 @@ $("revealBtn").addEventListener("click", async () => {
 (async function init() {
   try {
     const user = await api("/api/me");
-    showApp(user);
-    await loadAll();
+    if (user.authenticated) {
+      showApp(user);
+      await loadAll();
+    } else {
+      showLogin();
+    }
   } catch {
     showLogin();
   }
