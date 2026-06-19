@@ -102,8 +102,18 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="Server Admin App", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Server Admin App", version="0.1.1", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
+
+
+@app.middleware("http")
+async def add_cache_headers(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
 
 
 @app.get("/")

@@ -47,6 +47,8 @@ cd C:\workspace\server-admin-app
 
 当前部署路径为 `https://ccnode.briconbric.com/server-desk/`。Nginx 使用 `/etc/letsencrypt/live/briconbric.com/fullchain.pem` 和 `/etc/letsencrypt/live/briconbric.com/privkey.pem` 的通用证书。
 
+首页和本地静态资源会返回 `Cache-Control: no-cache, no-store, must-revalidate`，前端 CSS/JS 使用版本号查询参数，避免部署后浏览器继续展示旧版界面。
+
 ## 首台服务器导入
 
 使用 `scripts/seed_server.py` 通过环境变量导入，真实登录凭据只进入运行时数据库。
