@@ -1,4 +1,4 @@
-const state = { servers: [], selectedId: null, audit: [] };
+const state = { servers: [], selectedId: null, audit: [], credentials: {}, credentialRequests: {} };
 
 const $ = (id) => document.getElementById(id);
 const basePath = window.location.pathname.endsWith("/") ? window.location.pathname : `${window.location.pathname}/`;
@@ -127,7 +127,6 @@ function rowHtml(s) {
 
 function renderDetail() {
   const s = selected();
-  $("credentialBox").classList.add("hidden");
   if (!s) {
     $("summarySelection").textContent = "选择服务器查看连接与凭据状态";
     $("emptyState").classList.remove("hidden");
@@ -153,6 +152,7 @@ function renderDetail() {
   $("detailUpdated").textContent = formatDateTime(s.updated_at);
   $("detailCheckedAt").textContent = formatDateTime(s.last_checked_at);
   $("sshCommand").textContent = `ssh ${s.login_user}@${s.hostname}`;
+  renderCredentialField(s);
 }
 
 function renderAudit() {
@@ -200,6 +200,74 @@ function payloadFromForm() {
 
 function selected() {
   return state.servers.find((s) => s.id === state.selectedId);
+}
+
+function renderCredentialField(server) {
+  const input = $("detailCredential");
+  input.type = "password";
+  updateCredentialToggle(false);
+  const cached = Object.prototype.hasOwnProperty.call(state.credentials, server.id);
+  if (cached) {
+    const value = state.credentials[server.id];
+    input.value = value;
+    input.placeholder = value ? "" : "未保存密码";
+    $("credentialStatus").textContent = value ? "密码已加载，默认遮蔽显示。" : "这台服务器还没有保存密码。";
+    return;
+  }
+  input.value = "";
+  input.placeholder = "正在加载密码";
+  $("credentialStatus").textContent = "正在从加密存储中读取密码。";
+  loadCredential(server.id);
+}
+
+async function loadCredential(serverId, options = {}) {
+  if (!options.force && Object.prototype.hasOwnProperty.call(state.credentials, serverId)) {
+    return state.credentials[serverId];
+  }
+  if (!options.force && state.credentialRequests[serverId]) {
+    return state.credentialRequests[serverId];
+  }
+  state.credentialRequests[serverId] = api(`/api/servers/${serverId}/credential`)
+    .then(async (data) => {
+      const value = data.credential || "";
+      state.credentials[serverId] = value;
+      if (selected()?.id === serverId) {
+        $("detailCredential").value = value;
+        $("detailCredential").placeholder = value ? "" : "未保存密码";
+        $("credentialStatus").textContent = value ? "密码已加载，默认遮蔽显示。" : "这台服务器还没有保存密码。";
+      }
+      state.audit = await api("/api/audit");
+      renderAudit();
+      return value;
+    })
+    .catch((error) => {
+      if (selected()?.id === serverId) {
+        $("detailCredential").value = "";
+        $("detailCredential").placeholder = "密码读取失败";
+        $("credentialStatus").textContent = error.message || "密码读取失败。";
+      }
+      return "";
+    })
+    .finally(() => {
+      delete state.credentialRequests[serverId];
+    });
+  return state.credentialRequests[serverId];
+}
+
+function updateCredentialToggle(visible) {
+  const icon = $("toggleCredentialBtn").querySelector("i");
+  icon.className = visible ? "ti ti-eye-off" : "ti ti-eye";
+  $("toggleCredentialBtn").title = visible ? "隐藏密码" : "显示密码";
+  $("revealBtn").innerHTML = visible ? '<i class="ti ti-eye-off"></i>隐藏密码' : '<i class="ti ti-eye"></i>显示密码';
+}
+
+async function showCredential(visible) {
+  const s = selected();
+  if (!s) return;
+  await loadCredential(s.id);
+  $("detailCredential").type = visible ? "text" : "password";
+  updateCredentialToggle(visible);
+  $("credentialStatus").textContent = visible ? "密码正在明文显示。" : "密码已加载，默认遮蔽显示。";
 }
 
 function authLabel(value) {
@@ -268,6 +336,7 @@ $("serverForm").addEventListener("submit", async (event) => {
   const method = id ? "PUT" : "POST";
   const path = id ? `/api/servers/${id}` : "/api/servers";
   const saved = await api(path, { method, body: JSON.stringify(payloadFromForm()) });
+  delete state.credentials[saved.id];
   state.selectedId = saved.id;
   $("serverDialog").close();
   await loadAll();
@@ -277,6 +346,7 @@ $("deleteBtn").addEventListener("click", async () => {
   const id = $("serverId").value;
   if (!id || !confirm("确认删除这台服务器？")) return;
   await api(`/api/servers/${id}`, { method: "DELETE" });
+  delete state.credentials[id];
   state.selectedId = null;
   $("serverDialog").close();
   await loadAll();
@@ -294,13 +364,23 @@ $("copySshBtn").addEventListener("click", async () => {
 });
 
 $("revealBtn").addEventListener("click", async () => {
+  await showCredential($("detailCredential").type === "password");
+});
+
+$("toggleCredentialBtn").addEventListener("click", async () => {
+  await showCredential($("detailCredential").type === "password");
+});
+
+$("copyCredentialBtn").addEventListener("click", async () => {
   const s = selected();
   if (!s) return;
-  const data = await api(`/api/servers/${s.id}/credential`);
-  $("credentialBox").textContent = data.credential || "未保存凭据";
-  $("credentialBox").classList.remove("hidden");
-  state.audit = await api("/api/audit");
-  renderAudit();
+  const value = await loadCredential(s.id);
+  if (!value) {
+    $("credentialStatus").textContent = "这台服务器还没有保存密码。";
+    return;
+  }
+  await navigator.clipboard.writeText(value);
+  $("credentialStatus").textContent = "密码已复制。";
 });
 
 (async function init() {

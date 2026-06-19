@@ -486,10 +486,44 @@ label {
   gap: 12px;
   padding: 14px;
 }
+.credential-card {
+  background: #fbfdfc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
 .quick-card h3,
+.credential-card h3,
 .command-box h3 {
   font-size: 14px;
   margin: 0;
+}
+.credential-line {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+.credential-line input {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--text);
+  flex: 1;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  height: 38px;
+  min-width: 0;
+  padding: 0 10px;
+}
+.credential-line input[readonly] {
+  cursor: default;
+}
+.credential-card small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
 }
 .command-box {
   background: #f7fbfa;
@@ -626,6 +660,11 @@ dialog::backdrop { background: rgba(10, 20, 18, 0.34); }
     align-items: flex-start;
     gap: 10px;
     flex-direction: column;
+  }
+  .credential-line {
+    align-items: stretch;
+    display: grid;
+    grid-template-columns: 1fr 38px 38px;
   }
   .ops-table thead,
   .audit-table thead {
