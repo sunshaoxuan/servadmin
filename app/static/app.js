@@ -115,7 +115,7 @@ function rowHtml(s) {
   return `
     <tr class="ops-row ${active}" data-id="${s.id}">
       <td>
-        <span class="server-title">${escapeHtml(s.name)}</span>
+        <span class="server-title">${s.is_starred ? '<span class="server-star" title="重点生产机">★</span>' : ""}${escapeHtml(s.name)}</span>
         <span class="server-sub">${escapeHtml(s.provider || "未设置")}</span>
         <span class="tags">${tags}</span>
       </td>
@@ -224,6 +224,7 @@ function openForm(server = null) {
     $(id).value = server?.[id] || "";
   }
   $("ssh_port").value = server?.ssh_port || 22;
+  $("is_starred").checked = Boolean(server?.is_starred);
   $("tags").value = (server?.tags || []).join(", ");
   $("credential").value = "";
   $("deleteBtn").classList.toggle("hidden", !server);
@@ -245,6 +246,7 @@ function payloadFromForm() {
     ssh_key_path: $("ssh_key_path").value.trim(),
     ssh_options: $("ssh_options").value.trim(),
     service_code: $("service_code").value.trim(),
+    is_starred: $("is_starred").checked,
     tags: $("tags").value.split(",").map((x) => x.trim()).filter(Boolean),
     credential: $("credential").value,
     notes: $("notes").value.trim(),

@@ -43,6 +43,7 @@ def test_login_create_reveal_and_audit():
                 "ssh_key_path": "/home/ops/.ssh/id_ed25519",
                 "ssh_options": "-o UserKnownHostsFile=/tmp/known_hosts",
                 "service_code": "113801369753",
+                "is_starred": True,
                 "tags": ["tokyo", "prod"],
                 "notes": "seeded test host",
                 "credential": "secret-value",
@@ -55,6 +56,7 @@ def test_login_create_reveal_and_audit():
         assert body["ssh_host"] == "127.0.0.1"
         assert body["ssh_port"] == 2222
         assert body["ssh_key_path"] == "/home/ops/.ssh/id_ed25519"
+        assert body["is_starred"] is True
 
         response = client.get(f"/api/servers/{body['id']}/credential")
         assert response.status_code == 200
@@ -65,6 +67,42 @@ def test_login_create_reveal_and_audit():
         actions = [row["action"] for row in response.json()]
         assert "create" in actions
         assert "reveal_credential" in actions
+    finally:
+        os.unlink(db_path)
+
+
+def test_starred_servers_are_listed_first():
+    client, db_path = make_client()
+    try:
+        response = client.post("/api/login", json={"username": "admin", "password": "admin-pass"})
+        assert response.status_code == 200
+        base_payload = {
+            "hostname": "host.local",
+            "ipv4": "192.0.2.20",
+            "ipv6": "",
+            "provider": "Test",
+            "region": "Test",
+            "login_user": "root",
+            "auth_type": "key",
+            "ssh_host": "192.0.2.20",
+            "ssh_port": 22,
+            "ssh_key_path": "",
+            "ssh_options": "",
+            "service_code": "",
+            "tags": [],
+            "notes": "",
+            "credential": "",
+        }
+        response = client.post("/api/servers", json={**base_payload, "name": "Normal", "is_starred": False})
+        assert response.status_code == 200
+        response = client.post("/api/servers", json={**base_payload, "name": "Starred", "is_starred": True})
+        assert response.status_code == 200
+
+        response = client.get("/api/servers")
+        assert response.status_code == 200
+        rows = response.json()
+        assert rows[0]["name"] == "Starred"
+        assert rows[0]["is_starred"] is True
     finally:
         os.unlink(db_path)
 

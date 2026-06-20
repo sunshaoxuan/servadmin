@@ -330,6 +330,14 @@ label {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.server-star {
+  color: #f59e0b;
+  display: inline-block;
+  font-size: 13px;
+  line-height: 1;
+  margin-right: 5px;
+  vertical-align: 1px;
+}
 .server-sub {
   color: var(--muted);
   display: block;
@@ -358,6 +366,14 @@ label {
   font-weight: 750;
   line-height: 1;
   padding: 5px 8px;
+}
+.checkbox-field {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+.checkbox-field input {
+  width: auto;
 }
 .status {
   align-items: center;

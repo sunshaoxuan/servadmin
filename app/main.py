@@ -47,6 +47,7 @@ class ServerPayload(BaseModel):
     ssh_key_path: Optional[str] = ""
     ssh_options: Optional[str] = ""
     service_code: Optional[str] = ""
+    is_starred: bool = False
     tags: List[str] = Field(default_factory=list)
     notes: Optional[str] = ""
     credential: Optional[str] = ""
@@ -496,7 +497,7 @@ def logout(response: Response, user=Depends(current_user)):
 
 @app.get("/api/servers")
 def list_servers(user=Depends(current_user), conn=Depends(db)):
-    rows = conn.execute("select * from servers order by updated_at desc, id desc").fetchall()
+    rows = conn.execute("select * from servers order by is_starred desc, updated_at desc, id desc").fetchall()
     return [row_to_server(row) for row in rows]
 
 
@@ -505,8 +506,8 @@ def create_server(payload: ServerPayload, user=Depends(current_user), conn=Depen
     cur = conn.execute(
         """
         insert into servers(name, hostname, ipv4, ipv6, provider, region, login_user, auth_type,
-          ssh_host, ssh_port, ssh_key_path, ssh_options, service_code, tags_json, notes, credential_encrypted)
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ssh_host, ssh_port, ssh_key_path, ssh_options, service_code, is_starred, tags_json, notes, credential_encrypted)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             payload.name,
@@ -522,6 +523,7 @@ def create_server(payload: ServerPayload, user=Depends(current_user), conn=Depen
             payload.ssh_key_path or "",
             payload.ssh_options or "",
             payload.service_code or "",
+            1 if payload.is_starred else 0,
             json.dumps(payload.tags),
             payload.notes or "",
             c.encrypt(payload.credential),
@@ -544,7 +546,7 @@ def update_server(server_id: int, payload: ServerPayload, user=Depends(current_u
         """
         update servers set name = ?, hostname = ?, ipv4 = ?, ipv6 = ?, provider = ?, region = ?,
           login_user = ?, auth_type = ?, ssh_host = ?, ssh_port = ?, ssh_key_path = ?, ssh_options = ?,
-          service_code = ?, tags_json = ?, notes = ?,
+          service_code = ?, is_starred = ?, tags_json = ?, notes = ?,
           credential_encrypted = ?, updated_at = current_timestamp
         where id = ?
         """,
@@ -562,6 +564,7 @@ def update_server(server_id: int, payload: ServerPayload, user=Depends(current_u
             payload.ssh_key_path or "",
             payload.ssh_options or "",
             payload.service_code or "",
+            1 if payload.is_starred else 0,
             json.dumps(payload.tags),
             payload.notes or "",
             credential,

@@ -30,6 +30,7 @@ create table if not exists servers (
   ssh_key_path text,
   ssh_options text,
   service_code text,
+  is_starred integer not null default 0,
   tags_json text not null default '[]',
   notes text,
   credential_encrypted text,
@@ -62,6 +63,7 @@ SERVER_MIGRATIONS = {
     "ssh_port": "alter table servers add column ssh_port integer not null default 22",
     "ssh_key_path": "alter table servers add column ssh_key_path text",
     "ssh_options": "alter table servers add column ssh_options text",
+    "is_starred": "alter table servers add column is_starred integer not null default 0",
     "config_status": "alter table servers add column config_status text not null default 'unknown'",
     "config_summary": "alter table servers add column config_summary text",
     "config_report_json": "alter table servers add column config_report_json text not null default '{}'",
@@ -95,6 +97,7 @@ def init_db(conn: sqlite3.Connection) -> None:
 def row_to_server(row: sqlite3.Row) -> dict[str, Any]:
     data = dict(row)
     data["tags"] = json.loads(data.pop("tags_json") or "[]")
+    data["is_starred"] = bool(data.get("is_starred"))
     data["config_report"] = json.loads(data.pop("config_report_json") or "{}")
     data["installed_apps"] = json.loads(data.pop("installed_apps_json") or "[]")
     data["services"] = json.loads(data.pop("services_json") or "[]")
