@@ -14,6 +14,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+import paramiko
 
 from .db import connect, init_db, row_to_server
 from .security import CredentialCipher, SessionCodec, hash_password, verify_password
@@ -215,9 +216,43 @@ def build_config_report(output: str) -> tuple[str, str, dict[str, Any], list[dic
     return status, summary, report, apps, services
 
 
-def run_server_inspection(row) -> tuple[str, str, dict[str, Any], list[dict[str, str]], list[dict[str, Any]]]:
+def run_paramiko_inspection(row, password: str) -> tuple[str, str, dict[str, Any], list[dict[str, str]], list[dict[str, Any]]]:
+    if not password:
+        return "error", "密码认证需要先保存登录凭据。", {"error": "密码认证需要先保存登录凭据。"}, [], []
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        client.connect(
+            hostname=ssh_target(row),
+            port=int(row["ssh_port"] or 22),
+            username=row["login_user"],
+            password=password,
+            timeout=10,
+            banner_timeout=10,
+            auth_timeout=10,
+            look_for_keys=False,
+            allow_agent=False,
+        )
+        _stdin, stdout, stderr = client.exec_command(INSPECTION_SCRIPT, timeout=20)
+        output = stdout.read().decode("utf-8", errors="replace")
+        error = stderr.read().decode("utf-8", errors="replace")
+        exit_code = stdout.channel.recv_exit_status()
+    except Exception as exc:
+        detail = str(exc)[:500]
+        return "error", detail, {"error": detail}, [], []
+    finally:
+        client.close()
+    if exit_code != 0:
+        detail = (error or output or "配置检查失败").strip()[:500]
+        return "error", detail, {"error": detail}, [], []
+    return build_config_report(output)
+
+
+def run_server_inspection(row, password: str = "") -> tuple[str, str, dict[str, Any], list[dict[str, str]], list[dict[str, Any]]]:
     target = ssh_target(row)
     is_local = target in {"localhost", "127.0.0.1", "::1"} or row["hostname"] in {"localhost", "127.0.0.1", "::1"}
+    if not is_local and row["auth_type"] == "password":
+        return run_paramiko_inspection(row, password)
     command = local_inspection_command(INSPECTION_SCRIPT) if is_local else ssh_command(row, INSPECTION_SCRIPT)
     completed = subprocess.run(command, capture_output=True, text=True, timeout=20)
     if completed.returncode != 0:
@@ -428,11 +463,12 @@ def check_server(server_id: int, user=Depends(current_user), conn=Depends(db)):
 
 
 @app.post("/api/servers/{server_id}/inspect")
-def inspect_server(server_id: int, user=Depends(current_user), conn=Depends(db)):
+def inspect_server(server_id: int, user=Depends(current_user), conn=Depends(db), c=Depends(cipher)):
     row = conn.execute("select * from servers where id = ?", (server_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="server not found")
-    status, summary, report, apps, services = run_server_inspection(row)
+    password = c.decrypt(row["credential_encrypted"]) if row["auth_type"] == "password" else ""
+    status, summary, report, apps, services = run_server_inspection(row, password)
     conn.execute(
         """
         update servers set config_status = ?, config_summary = ?, config_report_json = ?,
