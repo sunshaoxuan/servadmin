@@ -1,0 +1,9 @@
+[Unit]
+Description=Encrypted Server Desk database backup
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/server-desk/backup.env
+ExecStart=/opt/server-desk/scripts/server_desk_backup.sh
+User=root
+Group=root

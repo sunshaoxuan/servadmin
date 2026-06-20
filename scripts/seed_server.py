@@ -21,6 +21,10 @@ def main() -> None:
         "region": os.environ.get("INITIAL_REGION", "Tokyo 2"),
         "login_user": os.environ.get("INITIAL_LOGIN_USER", "ubuntu"),
         "auth_type": os.environ.get("INITIAL_AUTH_TYPE", "password"),
+        "ssh_host": os.environ.get("INITIAL_SSH_HOST", ""),
+        "ssh_port": int(os.environ.get("INITIAL_SSH_PORT", "22")),
+        "ssh_key_path": os.environ.get("INITIAL_SSH_KEY_PATH", ""),
+        "ssh_options": os.environ.get("INITIAL_SSH_OPTIONS", ""),
         "service_code": os.environ.get("INITIAL_SERVICE_CODE", ""),
         "tags_json": json.dumps([x.strip() for x in os.environ.get("INITIAL_TAGS", "prod,tokyo").split(",") if x.strip()]),
         "notes": os.environ.get("INITIAL_NOTES", ""),
@@ -34,7 +38,8 @@ def main() -> None:
             conn.execute(
                 """
                 update servers set name = ?, ipv4 = ?, ipv6 = ?, provider = ?, region = ?, login_user = ?,
-                  auth_type = ?, service_code = ?, tags_json = ?, notes = ?, credential_encrypted = ?,
+                  auth_type = ?, ssh_host = ?, ssh_port = ?, ssh_key_path = ?, ssh_options = ?,
+                  service_code = ?, tags_json = ?, notes = ?, credential_encrypted = ?,
                   updated_at = current_timestamp
                 where hostname = ?
                 """,
@@ -46,6 +51,10 @@ def main() -> None:
                     payload["region"],
                     payload["login_user"],
                     payload["auth_type"],
+                    payload["ssh_host"],
+                    payload["ssh_port"],
+                    payload["ssh_key_path"],
+                    payload["ssh_options"],
                     payload["service_code"],
                     payload["tags_json"],
                     payload["notes"],
@@ -57,9 +66,9 @@ def main() -> None:
             conn.execute(
                 """
                 insert into servers(name, hostname, ipv4, ipv6, provider, region, login_user, auth_type,
-                  service_code, tags_json, notes, credential_encrypted)
+                  ssh_host, ssh_port, ssh_key_path, ssh_options, service_code, tags_json, notes, credential_encrypted)
                 values (:name, :hostname, :ipv4, :ipv6, :provider, :region, :login_user, :auth_type,
-                  :service_code, :tags_json, :notes, :credential_encrypted)
+                  :ssh_host, :ssh_port, :ssh_key_path, :ssh_options, :service_code, :tags_json, :notes, :credential_encrypted)
                 """,
                 payload,
             )
@@ -70,4 +79,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

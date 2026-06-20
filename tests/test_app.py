@@ -37,6 +37,10 @@ def test_login_create_reveal_and_audit():
                 "region": "Tokyo 2",
                 "login_user": "ubuntu",
                 "auth_type": "password",
+                "ssh_host": "127.0.0.1",
+                "ssh_port": 2222,
+                "ssh_key_path": "/home/ops/.ssh/id_ed25519",
+                "ssh_options": "-o UserKnownHostsFile=/tmp/known_hosts",
                 "service_code": "113801369753",
                 "tags": ["tokyo", "prod"],
                 "notes": "seeded test host",
@@ -47,6 +51,9 @@ def test_login_create_reveal_and_audit():
         body = response.json()
         assert "credential_encrypted" not in body
         assert body["name"] == "Tokyo VPS"
+        assert body["ssh_host"] == "127.0.0.1"
+        assert body["ssh_port"] == 2222
+        assert body["ssh_key_path"] == "/home/ops/.ssh/id_ed25519"
 
         response = client.get(f"/api/servers/{body['id']}/credential")
         assert response.status_code == 200
@@ -80,11 +87,56 @@ def test_static_and_index_are_not_cached():
         response = client.get("/")
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
-        assert "static/styles.css?v=20260620-ui4" in response.text
+        assert "static/styles.css?v=20260620-infra1" in response.text
         assert 'id="detailCredential"' in response.text
 
         response = client.get("/static/styles.css")
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
+    finally:
+        os.unlink(db_path)
+
+
+def test_inspect_localhost_records_config_and_services():
+    client, db_path = make_client()
+    try:
+        response = client.post("/api/login", json={"username": "admin", "password": "admin-pass"})
+        assert response.status_code == 200
+        response = client.post(
+            "/api/servers",
+            json={
+                "name": "Localhost",
+                "hostname": "localhost",
+                "ipv4": "127.0.0.1",
+                "ipv6": "",
+                "provider": "Local",
+                "region": "Dev",
+                "login_user": "shou",
+                "auth_type": "key",
+                "ssh_host": "127.0.0.1",
+                "ssh_port": 22,
+                "ssh_key_path": "",
+                "ssh_options": "",
+                "service_code": "",
+                "tags": ["local"],
+                "notes": "",
+                "credential": "",
+            },
+        )
+        assert response.status_code == 200
+        server_id = response.json()["id"]
+
+        response = client.post(f"/api/servers/{server_id}/inspect")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["config_status"] in {"ok", "warning"}
+        assert "apps" in body["config_summary"]
+        assert isinstance(body["config_report"], dict)
+        assert isinstance(body["installed_apps"], list)
+        assert isinstance(body["services"], list)
+
+        response = client.get("/api/audit")
+        assert response.status_code == 200
+        assert "inspect" in [row["action"] for row in response.json()]
     finally:
         os.unlink(db_path)

@@ -7,7 +7,7 @@
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230f766e'/%3E%3Ctext x='32' y='39' font-size='22' text-anchor='middle' font-family='Arial' font-weight='700' fill='white'%3ESD%3C/text%3E%3C/svg%3E" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0-beta20/dist/css/tabler.min.css" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.28.1/dist/tabler-icons.min.css" />
-    <link rel="stylesheet" href="static/styles.css?v=20260620-ui4" />
+    <link rel="stylesheet" href="static/styles.css?v=20260620-infra1" />
   </head>
   <body>
     <main id="loginView" class="login-screen">
@@ -113,6 +113,7 @@
                       <th>地址</th>
                       <th>登录</th>
                       <th>状态</th>
+                      <th>配置</th>
                       <th>最近检查</th>
                       <th>操作</th>
                     </tr>
@@ -172,8 +173,9 @@
 
               <div class="detail-tabs">
                 <span class="active">概览</span>
-                <span>凭据</span>
-                <span>检查历史</span>
+                <span>SSH</span>
+                <span>配置</span>
+                <span>服务</span>
                 <span>备注</span>
               </div>
 
@@ -182,6 +184,10 @@
                 <dt>IPv6</dt><dd id="detailIpv6"></dd>
                 <dt>登录用户</dt><dd id="detailLoginUser"></dd>
                 <dt>认证方式</dt><dd id="detailAuthType"></dd>
+                <dt>SSH 主机</dt><dd id="detailSshHost"></dd>
+                <dt>SSH 端口</dt><dd id="detailSshPort"></dd>
+                <dt>密钥路径</dt><dd id="detailSshKeyPath"></dd>
+                <dt>SSH 参数</dt><dd id="detailSshOptions"></dd>
                 <dt>服务代码</dt><dd id="detailServiceCode"></dd>
                 <dt>供应商</dt><dd id="detailProviderRegion"></dd>
                 <dt>标签</dt><dd id="detailTags"></dd>
@@ -189,24 +195,44 @@
                 <dt>创建时间</dt><dd id="detailCreated"></dd>
                 <dt>更新时间</dt><dd id="detailUpdated"></dd>
                 <dt>最后检查</dt><dd id="detailCheckedAt"></dd>
+                <dt>配置检查</dt><dd id="detailConfigStatus"></dd>
+                <dt>系统信息</dt><dd id="detailConfigReport"></dd>
               </dl>
 
               <div class="credential-card">
-                <h3>密码</h3>
+                <h3>凭据</h3>
                 <div class="credential-line">
-                  <input id="detailCredential" type="password" readonly autocomplete="off" placeholder="正在加载密码" />
-                  <button id="toggleCredentialBtn" class="btn btn-light btn-icon" type="button" title="显示密码"><i class="ti ti-eye"></i></button>
-                  <button id="copyCredentialBtn" class="btn btn-light btn-icon" type="button" title="复制密码"><i class="ti ti-copy"></i></button>
+                  <input id="detailCredential" type="password" readonly autocomplete="off" placeholder="正在加载凭据" />
+                  <button id="toggleCredentialBtn" class="btn btn-light btn-icon" type="button" title="显示凭据"><i class="ti ti-eye"></i></button>
+                  <button id="copyCredentialBtn" class="btn btn-light btn-icon" type="button" title="复制凭据"><i class="ti ti-copy"></i></button>
                 </div>
-                <small id="credentialStatus">密码加密存储在服务器数据库中。</small>
+                <small id="credentialStatus">凭据加密存储在服务器数据库中。</small>
+              </div>
+
+              <div class="inspection-card">
+                <div class="inspection-head">
+                  <h3>应用与服务</h3>
+                  <span id="inspectionSummary">未检查</span>
+                </div>
+                <div class="inspection-columns">
+                  <div>
+                    <strong>已安装应用</strong>
+                    <ul id="installedApps"></ul>
+                  </div>
+                  <div>
+                    <strong>正在提供的服务</strong>
+                    <ul id="runningServices"></ul>
+                  </div>
+                </div>
               </div>
 
               <div class="quick-card">
                 <h3>快速操作</h3>
                 <div class="detail-actions">
                   <button id="checkBtn" class="btn btn-primary"><i class="ti ti-plug-connected"></i>检查 SSH</button>
+                  <button id="inspectBtn" class="btn btn-light"><i class="ti ti-list-search"></i>检查配置</button>
                   <button id="editBtn" class="btn btn-light"><i class="ti ti-pencil"></i>编辑</button>
-                  <button id="revealBtn" class="btn btn-danger-lt"><i class="ti ti-eye"></i>显示密码</button>
+                  <button id="revealBtn" class="btn btn-danger-lt"><i class="ti ti-eye"></i>显示凭据</button>
                 </div>
               </div>
 
@@ -239,10 +265,14 @@
           <label>区域<input id="region" /></label>
           <label>登录用户<input id="login_user" required /></label>
           <label>认证方式<select id="auth_type"><option value="password">密码</option><option value="key">密钥</option></select></label>
+          <label>SSH 主机<input id="ssh_host" placeholder="留空使用 IPv4 或主机名" /></label>
+          <label>SSH 端口<input id="ssh_port" type="number" min="1" max="65535" value="22" /></label>
+          <label>SSH 密钥路径<input id="ssh_key_path" placeholder="/home/ops/.ssh/id_ed25519" /></label>
+          <label>SSH 参数<input id="ssh_options" placeholder="-o ProxyJump=bastion" /></label>
           <label>服务代码<input id="service_code" /></label>
           <label>标签<input id="tags" placeholder="prod, tokyo, web" /></label>
         </div>
-        <label>凭据<input id="credential" type="password" placeholder="编辑时留空表示不修改" /></label>
+        <label>凭据<input id="credential" type="password" placeholder="密码、密钥口令或需要加密保存的连接凭据，编辑时留空表示不修改" /></label>
         <label>备注<textarea id="notes" rows="4"></textarea></label>
         <div class="dialog-actions">
           <button type="button" id="deleteBtn" class="btn btn-danger-lt hidden">删除</button>
@@ -253,6 +283,6 @@
       </form>
     </dialog>
 
-    <script src="static/app.js?v=20260620-ui4"></script>
+    <script src="static/app.js?v=20260620-infra1"></script>
   </body>
 </html>

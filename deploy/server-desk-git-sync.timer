@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Git for Server Desk updates
+
+[Timer]
+OnBootSec=5m
+OnUnitActiveSec=5m
+Persistent=true
+RandomizedDelaySec=30s
+
+[Install]
+WantedBy=timers.target

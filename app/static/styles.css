@@ -298,12 +298,13 @@ label {
   letter-spacing: 0;
   text-transform: uppercase;
 }
-.ops-table th:nth-child(1) { width: 28%; }
-.ops-table th:nth-child(2) { width: 27%; }
-.ops-table th:nth-child(3) { width: 12%; }
-.ops-table th:nth-child(4) { width: 12%; }
+.ops-table th:nth-child(1) { width: 24%; }
+.ops-table th:nth-child(2) { width: 24%; }
+.ops-table th:nth-child(3) { width: 11%; }
+.ops-table th:nth-child(4) { width: 10%; }
 .ops-table th:nth-child(5) { width: 12%; }
-.ops-table th:nth-child(6) { width: 9%; }
+.ops-table th:nth-child(6) { width: 11%; }
+.ops-table th:nth-child(7) { width: 8%; }
 .ops-row {
   cursor: pointer;
 }
@@ -367,6 +368,10 @@ label {
 .status.online { background: #dff7ed; color: #0f6b47; }
 .status.offline { background: #ffe8e6; color: var(--danger); }
 .status.unknown { background: #fff4d8; color: var(--amber); }
+.status.config-ok { background: #dff7ed; color: #0f6b47; }
+.status.config-warning { background: #fff4d8; color: var(--amber); }
+.status.config-error { background: #ffe8e6; color: var(--danger); }
+.status.config-unknown { background: #edf1f4; color: #596873; }
 .row-actions {
   align-items: center;
   display: flex;
@@ -496,6 +501,7 @@ label {
 }
 .quick-card h3,
 .credential-card h3,
+.inspection-card h3,
 .command-box h3 {
   font-size: 14px;
   margin: 0;
@@ -524,6 +530,71 @@ label {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.4;
+}
+.inspection-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+.inspection-head {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+.inspection-head span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.inspection-columns {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 1fr 1fr;
+}
+.inspection-columns strong {
+  display: block;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.inspection-columns ul {
+  display: grid;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: 0;
+}
+.inspection-columns li {
+  background: #f7fbfa;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  display: grid;
+  gap: 2px;
+  padding: 7px 8px;
+}
+.inspection-columns li span,
+.inspection-columns li small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.inspection-columns li small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.inspection-columns .muted-item {
+  color: var(--muted);
+}
+.config-line {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 7px;
+}
+.config-line strong {
+  color: var(--muted);
+  font-size: 12px;
 }
 .command-box {
   background: #f7fbfa;
@@ -591,6 +662,10 @@ label {
 .audit-action.check {
   background: #e8f2ff;
   color: var(--blue);
+}
+.audit-action.inspect {
+  background: #edf1f4;
+  color: #455560;
 }
 .audit-action.update {
   background: #fff4d8;
@@ -665,6 +740,9 @@ dialog::backdrop { background: rgba(10, 20, 18, 0.34); }
     align-items: stretch;
     display: grid;
     grid-template-columns: 1fr 38px 38px;
+  }
+  .inspection-columns {
+    grid-template-columns: 1fr;
   }
   .ops-table thead,
   .audit-table thead {

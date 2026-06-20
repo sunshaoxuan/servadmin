@@ -52,7 +52,7 @@ function render() {
   const rows = filteredServers();
   $("serverRows").innerHTML = rows.length
     ? rows.map(rowHtml).join("")
-    : `<tr><td colspan="6" class="text-secondary text-center py-5">暂无服务器</td></tr>`;
+    : `<tr><td colspan="7" class="text-secondary text-center py-5">暂无服务器</td></tr>`;
 
   document.querySelectorAll(".ops-row").forEach((el) => {
     el.addEventListener("click", () => {
@@ -70,6 +70,10 @@ function render() {
       if (el.dataset.rowAction === "edit") openForm(server);
       if (el.dataset.rowAction === "check") {
         await api(`/api/servers/${server.id}/check`, { method: "POST" });
+        await loadAll();
+      }
+      if (el.dataset.rowAction === "inspect") {
+        await api(`/api/servers/${server.id}/inspect`, { method: "POST" });
         await loadAll();
       }
     });
@@ -115,10 +119,15 @@ function rowHtml(s) {
         <span class="server-sub">${escapeHtml(authLabel(s.auth_type))}</span>
       </td>
       <td data-label="状态"><span class="status ${escapeHtml(s.last_status)}">${escapeHtml(s.last_status)}</span></td>
+      <td data-label="配置">
+        <span class="status config-${escapeHtml(s.config_status || "unknown")}">${escapeHtml(configLabel(s.config_status))}</span>
+        <span class="server-sub">${escapeHtml(s.config_summary || "未检查")}</span>
+      </td>
       <td data-label="最近检查"><span class="server-sub">${escapeHtml(s.last_checked_at ? s.last_checked_at.slice(0, 16) : "未检查")}</span></td>
       <td data-label="操作">
         <div class="row-actions">
           <button class="btn btn-light btn-icon btn-sm" type="button" title="检查 SSH" data-row-action="check"><i class="ti ti-activity-heartbeat"></i></button>
+          <button class="btn btn-light btn-icon btn-sm" type="button" title="检查配置" data-row-action="inspect"><i class="ti ti-list-search"></i></button>
           <button class="btn btn-light btn-icon btn-sm" type="button" title="编辑" data-row-action="edit"><i class="ti ti-pencil"></i></button>
         </div>
       </td>
@@ -144,6 +153,10 @@ function renderDetail() {
   $("detailIpv6").textContent = s.ipv6 || "未设置";
   $("detailLoginUser").textContent = s.login_user || "未设置";
   $("detailAuthType").textContent = authLabel(s.auth_type);
+  $("detailSshHost").textContent = s.ssh_host || s.ipv4 || s.hostname || "未设置";
+  $("detailSshPort").textContent = s.ssh_port || 22;
+  $("detailSshKeyPath").textContent = s.ssh_key_path || "未设置";
+  $("detailSshOptions").textContent = s.ssh_options || "未设置";
   $("detailServiceCode").textContent = s.service_code || "未设置";
   $("detailProviderRegion").textContent = [s.provider, s.region].filter(Boolean).join(" / ") || "未设置";
   $("detailTags").innerHTML = (s.tags || []).map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join("") || "未设置";
@@ -151,7 +164,12 @@ function renderDetail() {
   $("detailCreated").textContent = formatDateTime(s.created_at);
   $("detailUpdated").textContent = formatDateTime(s.updated_at);
   $("detailCheckedAt").textContent = formatDateTime(s.last_checked_at);
-  $("sshCommand").textContent = `ssh ${s.login_user}@${s.hostname}`;
+  $("detailConfigStatus").innerHTML = `<span class="status config-${escapeHtml(s.config_status || "unknown")}">${escapeHtml(configLabel(s.config_status))}</span> ${escapeHtml(s.config_summary || "未检查")}`;
+  $("detailConfigReport").innerHTML = configReportHtml(s.config_report || {});
+  $("inspectionSummary").textContent = s.last_config_check_at ? `检查时间 ${formatDateTime(s.last_config_check_at)}` : "未检查";
+  $("installedApps").innerHTML = listAppsHtml(s.installed_apps || []);
+  $("runningServices").innerHTML = listServicesHtml(s.services || []);
+  $("sshCommand").textContent = sshCommand(s);
   renderCredentialField(s);
 }
 
@@ -172,9 +190,10 @@ function renderAudit() {
 function openForm(server = null) {
   $("dialogTitle").textContent = server ? "编辑服务器" : "新增服务器";
   $("serverId").value = server?.id || "";
-  for (const id of ["name", "hostname", "ipv4", "ipv6", "provider", "region", "login_user", "auth_type", "service_code", "notes"]) {
+  for (const id of ["name", "hostname", "ipv4", "ipv6", "provider", "region", "login_user", "auth_type", "ssh_host", "ssh_port", "ssh_key_path", "ssh_options", "service_code", "notes"]) {
     $(id).value = server?.[id] || "";
   }
+  $("ssh_port").value = server?.ssh_port || 22;
   $("tags").value = (server?.tags || []).join(", ");
   $("credential").value = "";
   $("deleteBtn").classList.toggle("hidden", !server);
@@ -191,6 +210,10 @@ function payloadFromForm() {
     region: $("region").value.trim(),
     login_user: $("login_user").value.trim(),
     auth_type: $("auth_type").value,
+    ssh_host: $("ssh_host").value.trim(),
+    ssh_port: Number($("ssh_port").value || 22),
+    ssh_key_path: $("ssh_key_path").value.trim(),
+    ssh_options: $("ssh_options").value.trim(),
     service_code: $("service_code").value.trim(),
     tags: $("tags").value.split(",").map((x) => x.trim()).filter(Boolean),
     credential: $("credential").value,
@@ -210,13 +233,13 @@ function renderCredentialField(server) {
   if (cached) {
     const value = state.credentials[server.id];
     input.value = value;
-    input.placeholder = value ? "" : "未保存密码";
-    $("credentialStatus").textContent = value ? "密码已加载，默认遮蔽显示。" : "这台服务器还没有保存密码。";
+    input.placeholder = value ? "" : "未保存凭据";
+    $("credentialStatus").textContent = value ? "凭据已加载，默认遮蔽显示。" : "这台服务器还没有保存凭据。";
     return;
   }
   input.value = "";
-  input.placeholder = "正在加载密码";
-  $("credentialStatus").textContent = "正在从加密存储中读取密码。";
+  input.placeholder = "正在加载凭据";
+  $("credentialStatus").textContent = "正在从加密存储中读取凭据。";
   loadCredential(server.id);
 }
 
@@ -233,8 +256,8 @@ async function loadCredential(serverId, options = {}) {
       state.credentials[serverId] = value;
       if (selected()?.id === serverId) {
         $("detailCredential").value = value;
-        $("detailCredential").placeholder = value ? "" : "未保存密码";
-        $("credentialStatus").textContent = value ? "密码已加载，默认遮蔽显示。" : "这台服务器还没有保存密码。";
+        $("detailCredential").placeholder = value ? "" : "未保存凭据";
+        $("credentialStatus").textContent = value ? "凭据已加载，默认遮蔽显示。" : "这台服务器还没有保存凭据。";
       }
       state.audit = await api("/api/audit");
       renderAudit();
@@ -243,8 +266,8 @@ async function loadCredential(serverId, options = {}) {
     .catch((error) => {
       if (selected()?.id === serverId) {
         $("detailCredential").value = "";
-        $("detailCredential").placeholder = "密码读取失败";
-        $("credentialStatus").textContent = error.message || "密码读取失败。";
+        $("detailCredential").placeholder = "凭据读取失败";
+        $("credentialStatus").textContent = error.message || "凭据读取失败。";
       }
       return "";
     })
@@ -257,8 +280,8 @@ async function loadCredential(serverId, options = {}) {
 function updateCredentialToggle(visible) {
   const icon = $("toggleCredentialBtn").querySelector("i");
   icon.className = visible ? "ti ti-eye-off" : "ti ti-eye";
-  $("toggleCredentialBtn").title = visible ? "隐藏密码" : "显示密码";
-  $("revealBtn").innerHTML = visible ? '<i class="ti ti-eye-off"></i>隐藏密码' : '<i class="ti ti-eye"></i>显示密码';
+  $("toggleCredentialBtn").title = visible ? "隐藏凭据" : "显示凭据";
+  $("revealBtn").innerHTML = visible ? '<i class="ti ti-eye-off"></i>隐藏凭据' : '<i class="ti ti-eye"></i>显示凭据';
 }
 
 async function showCredential(visible) {
@@ -267,11 +290,20 @@ async function showCredential(visible) {
   await loadCredential(s.id);
   $("detailCredential").type = visible ? "text" : "password";
   updateCredentialToggle(visible);
-  $("credentialStatus").textContent = visible ? "密码正在明文显示。" : "密码已加载，默认遮蔽显示。";
+  $("credentialStatus").textContent = visible ? "凭据正在明文显示。" : "凭据已加载，默认遮蔽显示。";
 }
 
 function authLabel(value) {
   return value === "key" ? "SSH Key" : "password";
+}
+
+function configLabel(value) {
+  return {
+    ok: "正常",
+    warning: "需确认",
+    error: "失败",
+    unknown: "未检查",
+  }[value || "unknown"] || value;
 }
 
 function actionLabel(value) {
@@ -281,8 +313,45 @@ function actionLabel(value) {
     update: "更新",
     delete: "删除",
     check: "检查",
+    inspect: "配置检查",
     reveal_credential: "查看凭据",
   }[value] || value;
+}
+
+function sshCommand(server) {
+  const args = ["ssh"];
+  if (server.ssh_key_path) args.push("-i", server.ssh_key_path);
+  if (server.ssh_port && Number(server.ssh_port) !== 22) args.push("-p", String(server.ssh_port));
+  if (server.ssh_options) args.push(server.ssh_options);
+  args.push(`${server.login_user}@${server.ssh_host || server.ipv4 || server.hostname}`);
+  return args.join(" ");
+}
+
+function configReportHtml(report) {
+  const osName = (report.os || []).find((line) => line.startsWith("PRETTY_NAME=")) || "";
+  const cleanOs = osName ? osName.replace("PRETTY_NAME=", "").replace(/^"|"$/g, "") : "未记录";
+  const items = [
+    ["系统", cleanOs],
+    ["内核", report.kernel || "未记录"],
+    ["CPU", report.cpu_count || "未记录"],
+    ["内存", report.memory || "未记录"],
+    ["磁盘", report.disk_root || "未记录"],
+  ];
+  if (report.error) items.unshift(["错误", report.error]);
+  return items.map(([key, value]) => `<span class="config-line"><strong>${escapeHtml(key)}</strong>${escapeHtml(value)}</span>`).join("");
+}
+
+function listAppsHtml(apps) {
+  if (!apps.length) return `<li class="muted-item">未记录</li>`;
+  return apps.slice(0, 20).map((app) => `<li><span>${escapeHtml(app.name)}</span><small>${escapeHtml(app.version || "")}</small></li>`).join("");
+}
+
+function listServicesHtml(services) {
+  if (!services.length) return `<li class="muted-item">未记录</li>`;
+  return services.slice(0, 30).map((service) => {
+    const exposure = service.external ? "外部可访问" : "内部监听";
+    return `<li><span>${escapeHtml(service.name)}</span><small>${escapeHtml(exposure)}</small></li>`;
+  }).join("");
 }
 
 function formatDateTime(value) {
@@ -359,6 +428,13 @@ $("checkBtn").addEventListener("click", async () => {
   await loadAll();
 });
 
+$("inspectBtn").addEventListener("click", async () => {
+  const s = selected();
+  if (!s) return;
+  await api(`/api/servers/${s.id}/inspect`, { method: "POST" });
+  await loadAll();
+});
+
 $("copySshBtn").addEventListener("click", async () => {
   await navigator.clipboard.writeText($("sshCommand").textContent);
 });
@@ -376,11 +452,11 @@ $("copyCredentialBtn").addEventListener("click", async () => {
   if (!s) return;
   const value = await loadCredential(s.id);
   if (!value) {
-    $("credentialStatus").textContent = "这台服务器还没有保存密码。";
+    $("credentialStatus").textContent = "这台服务器还没有保存凭据。";
     return;
   }
   await navigator.clipboard.writeText(value);
-  $("credentialStatus").textContent = "密码已复制。";
+  $("credentialStatus").textContent = "凭据已复制。";
 });
 
 (async function init() {

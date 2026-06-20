@@ -52,6 +52,37 @@ cd C:\workspace\server-admin-app
 
 证书验收需要同时确认两层：TLS 客户端能验证到 `*.briconbric.com` 的 Let's Encrypt 证书链，浏览器安全状态为 `secure` 且没有 `http://` 混合资源。当前线上证书有效期为 2026-05-06 到 2026-08-04，部署验证使用 Chrome 和 Edge 的安全事件确认。线上环境应设置 `OPS_COOKIE_SECURE=1`，Nginx 片段会返回 HSTS、`X-Content-Type-Options` 和 `Referrer-Policy` 响应头。
 
+### 生产 Git 同步
+
+生产目录应保持为 Git 工作树。`server-desk-git-sync.timer` 每 5 分钟检查 `origin/main`，发现新提交后会先执行数据库加密备份，再停止服务、快进更新、安装依赖、运行测试并启动服务。
+
+```bash
+install -m 0755 scripts/server_desk_git_sync.sh /opt/server-desk/scripts/server_desk_git_sync.sh
+install -m 0755 scripts/server_desk_backup.sh /opt/server-desk/scripts/server_desk_backup.sh
+install -m 0644 deploy/server-desk-git-sync.service /etc/systemd/system/server-desk-git-sync.service
+install -m 0644 deploy/server-desk-git-sync.timer /etc/systemd/system/server-desk-git-sync.timer
+systemctl daemon-reload
+systemctl enable --now server-desk-git-sync.timer
+```
+
+如果生产目录存在本地改动，同步脚本会拒绝更新，避免覆盖未入库文件。
+
+### 加密备份
+
+`server-desk-backup.timer` 每天执行一次 SQLite 一致性备份。备份文件会使用 `/etc/server-desk/backup.key` 加密，提交到 `/var/lib/server-desk-backups`，并在配置 `BACKUP_GIT_REMOTE` 后推送到指定 Git 仓库。
+
+```bash
+install -m 0600 deploy/backup.env.example /etc/server-desk/backup.env
+openssl rand -base64 48 > /etc/server-desk/backup.key
+chmod 600 /etc/server-desk/backup.key
+install -m 0644 deploy/server-desk-backup.service /etc/systemd/system/server-desk-backup.service
+install -m 0644 deploy/server-desk-backup.timer /etc/systemd/system/server-desk-backup.timer
+systemctl daemon-reload
+systemctl enable --now server-desk-backup.timer
+```
+
+`BACKUP_GIT_REMOTE` 建议使用只存放加密备份的私有仓库。不要把 `/etc/server-desk/backup.key` 提交到 Git。
+
 ## 首台服务器导入
 
 使用 `scripts/seed_server.py` 通过环境变量导入，真实登录凭据只进入运行时数据库。

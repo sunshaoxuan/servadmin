@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
-from typing import Any
+from typing import Any, Union
 
 
 SCHEMA = """
@@ -25,6 +25,10 @@ create table if not exists servers (
   region text,
   login_user text not null,
   auth_type text not null default 'password',
+  ssh_host text,
+  ssh_port integer not null default 22,
+  ssh_key_path text,
+  ssh_options text,
   service_code text,
   tags_json text not null default '[]',
   notes text,
@@ -32,6 +36,12 @@ create table if not exists servers (
   last_status text not null default 'unknown',
   last_latency_ms integer,
   last_checked_at text,
+  config_status text not null default 'unknown',
+  config_summary text,
+  config_report_json text not null default '{}',
+  installed_apps_json text not null default '[]',
+  services_json text not null default '[]',
+  last_config_check_at text,
   created_at text not null default current_timestamp,
   updated_at text not null default current_timestamp
 );
@@ -47,8 +57,21 @@ create table if not exists audit_events (
 );
 """
 
+SERVER_MIGRATIONS = {
+    "ssh_host": "alter table servers add column ssh_host text",
+    "ssh_port": "alter table servers add column ssh_port integer not null default 22",
+    "ssh_key_path": "alter table servers add column ssh_key_path text",
+    "ssh_options": "alter table servers add column ssh_options text",
+    "config_status": "alter table servers add column config_status text not null default 'unknown'",
+    "config_summary": "alter table servers add column config_summary text",
+    "config_report_json": "alter table servers add column config_report_json text not null default '{}'",
+    "installed_apps_json": "alter table servers add column installed_apps_json text not null default '[]'",
+    "services_json": "alter table servers add column services_json text not null default '[]'",
+    "last_config_check_at": "alter table servers add column last_config_check_at text",
+}
 
-def connect(db_path: str | Path) -> sqlite3.Connection:
+
+def connect(db_path: Union[str, Path]) -> sqlite3.Connection:
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
@@ -59,12 +82,21 @@ def connect(db_path: str | Path) -> sqlite3.Connection:
 
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    existing_columns = {
+        row["name"] if isinstance(row, sqlite3.Row) else row[1]
+        for row in conn.execute("pragma table_info(servers)").fetchall()
+    }
+    for column_name, statement in SERVER_MIGRATIONS.items():
+        if column_name not in existing_columns:
+            conn.execute(statement)
     conn.commit()
 
 
 def row_to_server(row: sqlite3.Row) -> dict[str, Any]:
     data = dict(row)
     data["tags"] = json.loads(data.pop("tags_json") or "[]")
+    data["config_report"] = json.loads(data.pop("config_report_json") or "{}")
+    data["installed_apps"] = json.loads(data.pop("installed_apps_json") or "[]")
+    data["services"] = json.loads(data.pop("services_json") or "[]")
     data.pop("credential_encrypted", None)
     return data
-

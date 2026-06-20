@@ -1,0 +1,10 @@
+[Unit]
+Description=Update Server Desk from Git
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/server-desk/scripts/server_desk_git_sync.sh
+User=root
+Group=root

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import socket
+import subprocess
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
@@ -32,16 +34,20 @@ class LoginRequest(BaseModel):
 class ServerPayload(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     hostname: str = Field(min_length=1, max_length=255)
-    ipv4: str | None = ""
-    ipv6: str | None = ""
-    provider: str | None = ""
-    region: str | None = ""
+    ipv4: Optional[str] = ""
+    ipv6: Optional[str] = ""
+    provider: Optional[str] = ""
+    region: Optional[str] = ""
     login_user: str = Field(min_length=1, max_length=80)
     auth_type: str = "password"
-    service_code: str | None = ""
-    tags: list[str] = Field(default_factory=list)
-    notes: str | None = ""
-    credential: str | None = ""
+    ssh_host: Optional[str] = ""
+    ssh_port: int = Field(default=22, ge=1, le=65535)
+    ssh_key_path: Optional[str] = ""
+    ssh_options: Optional[str] = ""
+    service_code: Optional[str] = ""
+    tags: List[str] = Field(default_factory=list)
+    notes: Optional[str] = ""
+    credential: Optional[str] = ""
 
 
 def db():
@@ -77,6 +83,147 @@ def audit(conn, actor: str, action: str, target_type: str, target_id: int | None
         (actor, action, target_type, target_id, detail[:500]),
     )
     conn.commit()
+
+
+def ssh_target(row) -> str:
+    return row["ssh_host"] or row["ipv4"] or row["hostname"]
+
+
+def ssh_command(row, remote_command: str) -> list[str]:
+    command = [
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+        "-o",
+        "ConnectTimeout=8",
+        "-p",
+        str(row["ssh_port"] or 22),
+    ]
+    if row["ssh_key_path"]:
+        command.extend(["-i", row["ssh_key_path"]])
+    if row["ssh_options"]:
+        command.extend(shlex.split(row["ssh_options"]))
+    command.append(f"{row['login_user']}@{ssh_target(row)}")
+    command.append(remote_command)
+    return command
+
+
+def local_inspection_command(remote_command: str) -> list[str]:
+    return ["sh", "-lc", remote_command]
+
+
+INSPECTION_SCRIPT = r"""
+set -u
+echo "__SECTION__os"
+(cat /etc/os-release 2>/dev/null || true) | sed -n '1,12p'
+echo "__SECTION__kernel"
+uname -a 2>/dev/null || true
+echo "__SECTION__cpu"
+(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo "") | head -1
+echo "__SECTION__memory"
+(awk '/MemTotal/ {print $2 " kB"}' /proc/meminfo 2>/dev/null || sysctl -n hw.memsize 2>/dev/null || echo "") | head -1
+echo "__SECTION__disk"
+df -hP / 2>/dev/null | tail -1 || true
+echo "__SECTION__apps"
+if command -v dpkg-query >/dev/null 2>&1; then
+  dpkg-query -W -f='${binary:Package}\t${Version}\n' 2>/dev/null | head -80
+elif command -v rpm >/dev/null 2>&1; then
+  rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\n' 2>/dev/null | head -80
+elif command -v brew >/dev/null 2>&1; then
+  brew list --versions 2>/dev/null | head -80
+fi
+echo "__SECTION__services"
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl list-units --type=service --state=running --no-legend --no-pager 2>/dev/null | awk '{print $1 "\t" $4 "\t" $5}' | head -80
+elif command -v service >/dev/null 2>&1; then
+  service --status-all 2>/dev/null | head -80
+fi
+echo "__SECTION__ports"
+if command -v ss >/dev/null 2>&1; then
+  ss -lntup 2>/dev/null | tail -n +2 | head -120
+elif command -v netstat >/dev/null 2>&1; then
+  netstat -lntup 2>/dev/null | tail -n +3 | head -120
+fi
+"""
+
+
+def split_sections(output: str) -> dict[str, list[str]]:
+    sections: dict[str, list[str]] = {}
+    current = ""
+    for line in output.splitlines():
+        if line.startswith("__SECTION__"):
+            current = line.replace("__SECTION__", "", 1)
+            sections[current] = []
+        elif current:
+            sections[current].append(line)
+    return sections
+
+
+def parse_apps(lines: list[str]) -> list[dict[str, str]]:
+    apps = []
+    for line in lines:
+        clean = line.strip()
+        if not clean:
+            continue
+        if "\t" in clean:
+            name, version = clean.split("\t", 1)
+        else:
+            parts = clean.split(maxsplit=1)
+            name = parts[0]
+            version = parts[1] if len(parts) > 1 else ""
+        apps.append({"name": name, "version": version})
+    return apps
+
+
+def parse_services(service_lines: list[str], port_lines: list[str]) -> list[dict[str, Any]]:
+    services: dict[str, dict[str, Any]] = {}
+    for line in service_lines:
+        clean = line.strip()
+        if not clean:
+            continue
+        name = clean.split()[0]
+        services[name] = {"name": name, "state": "running", "ports": [], "external": False}
+    for line in port_lines:
+        clean = line.strip()
+        if not clean:
+            continue
+        external = any(marker in clean for marker in ("0.0.0.0:", "[::]:", ":::"))
+        key = clean.split()[-1] if clean.split() else clean
+        if key == "*":
+            key = clean
+        entry = services.setdefault(key, {"name": key, "state": "listening", "ports": [], "external": False})
+        entry["ports"].append(clean)
+        entry["external"] = entry["external"] or external
+    return list(services.values())[:120]
+
+
+def build_config_report(output: str) -> tuple[str, str, dict[str, Any], list[dict[str, str]], list[dict[str, Any]]]:
+    sections = split_sections(output)
+    apps = parse_apps(sections.get("apps", []))
+    services = parse_services(sections.get("services", []), sections.get("ports", []))
+    report = {
+        "os": sections.get("os", []),
+        "kernel": "\n".join(sections.get("kernel", [])).strip(),
+        "cpu_count": "\n".join(sections.get("cpu", [])).strip(),
+        "memory": "\n".join(sections.get("memory", [])).strip(),
+        "disk_root": "\n".join(sections.get("disk", [])).strip(),
+    }
+    status = "ok" if report["kernel"] else "warning"
+    summary = f"{len(apps)} apps, {len(services)} services"
+    return status, summary, report, apps, services
+
+
+def run_server_inspection(row) -> tuple[str, str, dict[str, Any], list[dict[str, str]], list[dict[str, Any]]]:
+    target = ssh_target(row)
+    is_local = target in {"localhost", "127.0.0.1", "::1"} or row["hostname"] in {"localhost", "127.0.0.1", "::1"}
+    command = local_inspection_command(INSPECTION_SCRIPT) if is_local else ssh_command(row, INSPECTION_SCRIPT)
+    completed = subprocess.run(command, capture_output=True, text=True, timeout=20)
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "inspection failed").strip()[:500]
+        return "error", detail, {"error": detail}, [], []
+    return build_config_report(completed.stdout)
 
 
 def bootstrap() -> None:
@@ -176,8 +323,8 @@ def create_server(payload: ServerPayload, user=Depends(current_user), conn=Depen
     cur = conn.execute(
         """
         insert into servers(name, hostname, ipv4, ipv6, provider, region, login_user, auth_type,
-          service_code, tags_json, notes, credential_encrypted)
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ssh_host, ssh_port, ssh_key_path, ssh_options, service_code, tags_json, notes, credential_encrypted)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             payload.name,
@@ -188,6 +335,10 @@ def create_server(payload: ServerPayload, user=Depends(current_user), conn=Depen
             payload.region or "",
             payload.login_user,
             payload.auth_type,
+            payload.ssh_host or "",
+            payload.ssh_port,
+            payload.ssh_key_path or "",
+            payload.ssh_options or "",
             payload.service_code or "",
             json.dumps(payload.tags),
             payload.notes or "",
@@ -210,7 +361,8 @@ def update_server(server_id: int, payload: ServerPayload, user=Depends(current_u
     conn.execute(
         """
         update servers set name = ?, hostname = ?, ipv4 = ?, ipv6 = ?, provider = ?, region = ?,
-          login_user = ?, auth_type = ?, service_code = ?, tags_json = ?, notes = ?,
+          login_user = ?, auth_type = ?, ssh_host = ?, ssh_port = ?, ssh_key_path = ?, ssh_options = ?,
+          service_code = ?, tags_json = ?, notes = ?,
           credential_encrypted = ?, updated_at = current_timestamp
         where id = ?
         """,
@@ -223,6 +375,10 @@ def update_server(server_id: int, payload: ServerPayload, user=Depends(current_u
             payload.region or "",
             payload.login_user,
             payload.auth_type,
+            payload.ssh_host or "",
+            payload.ssh_port,
+            payload.ssh_key_path or "",
+            payload.ssh_options or "",
             payload.service_code or "",
             json.dumps(payload.tags),
             payload.notes or "",
@@ -249,10 +405,10 @@ def delete_server(server_id: int, user=Depends(current_user), conn=Depends(db)):
 
 @app.post("/api/servers/{server_id}/check")
 def check_server(server_id: int, user=Depends(current_user), conn=Depends(db)):
-    row = conn.execute("select hostname, ipv4 from servers where id = ?", (server_id,)).fetchone()
+    row = conn.execute("select hostname, ipv4, ssh_host, ssh_port from servers where id = ?", (server_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="server not found")
-    target = row["ipv4"] or row["hostname"]
+    target = ssh_target(row)
     started = time.perf_counter()
     status = "offline"
     error = ""
@@ -269,6 +425,27 @@ def check_server(server_id: int, user=Depends(current_user), conn=Depends(db)):
     conn.commit()
     audit(conn, user["username"], "check", "server", server_id, f"{status} {latency}ms")
     return {"status": status, "latency_ms": latency, "error": error}
+
+
+@app.post("/api/servers/{server_id}/inspect")
+def inspect_server(server_id: int, user=Depends(current_user), conn=Depends(db)):
+    row = conn.execute("select * from servers where id = ?", (server_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="server not found")
+    status, summary, report, apps, services = run_server_inspection(row)
+    conn.execute(
+        """
+        update servers set config_status = ?, config_summary = ?, config_report_json = ?,
+          installed_apps_json = ?, services_json = ?, last_config_check_at = current_timestamp,
+          updated_at = current_timestamp
+        where id = ?
+        """,
+        (status, summary, json.dumps(report), json.dumps(apps), json.dumps(services), server_id),
+    )
+    conn.commit()
+    audit(conn, user["username"], "inspect", "server", server_id, summary)
+    row = conn.execute("select * from servers where id = ?", (server_id,)).fetchone()
+    return row_to_server(row)
 
 
 @app.get("/api/servers/{server_id}/credential")
