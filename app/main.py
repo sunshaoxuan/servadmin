@@ -591,11 +591,12 @@ def check_server(server_id: int, user=Depends(current_user), conn=Depends(db)):
     if not row:
         raise HTTPException(status_code=404, detail="server not found")
     target = ssh_target(row)
+    port = int(row["ssh_port"] or 22)
     started = time.perf_counter()
     status = "offline"
     error = ""
     try:
-        with socket.create_connection((target, 22), timeout=3):
+        with socket.create_connection((target, port), timeout=3):
             status = "online"
     except OSError as exc:
         error = str(exc)

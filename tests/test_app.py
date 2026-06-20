@@ -1,4 +1,5 @@
 import os
+import socket
 import tempfile
 
 from cryptography.fernet import Fernet
@@ -77,6 +78,57 @@ def test_requires_login_for_servers():
 
         response = client.get("/api/servers")
         assert response.status_code == 401
+    finally:
+        os.unlink(db_path)
+
+
+def test_check_uses_configured_ssh_port(monkeypatch):
+    client, db_path = make_client()
+    calls = []
+
+    class DummySocket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def fake_create_connection(address, timeout):
+        calls.append((address, timeout))
+        return DummySocket()
+
+    monkeypatch.setattr(socket, "create_connection", fake_create_connection)
+    try:
+        response = client.post("/api/login", json={"username": "admin", "password": "admin-pass"})
+        assert response.status_code == 200
+        response = client.post(
+            "/api/servers",
+            json={
+                "name": "Custom Port",
+                "hostname": "custom-port.local",
+                "ipv4": "192.0.2.10",
+                "ipv6": "",
+                "provider": "Test",
+                "region": "Test",
+                "login_user": "root",
+                "auth_type": "key",
+                "ssh_host": "192.0.2.10",
+                "ssh_port": 3022,
+                "ssh_key_path": "",
+                "ssh_options": "",
+                "service_code": "",
+                "tags": [],
+                "notes": "",
+                "credential": "",
+            },
+        )
+        assert response.status_code == 200
+        server_id = response.json()["id"]
+
+        response = client.post(f"/api/servers/{server_id}/check")
+        assert response.status_code == 200
+        assert response.json()["status"] == "online"
+        assert calls == [(("192.0.2.10", 3022), 3)]
     finally:
         os.unlink(db_path)
 
