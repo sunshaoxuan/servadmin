@@ -24,6 +24,7 @@ DB_PATH="${OPS_DB_PATH:-/var/lib/server-desk/ops.sqlite3}"
 ENCRYPTION_KEY_FILE="${BACKUP_ENCRYPTION_KEY_FILE:-/etc/server-desk/backup.key}"
 GIT_REMOTE="${BACKUP_GIT_REMOTE:-}"
 GIT_BRANCH="${BACKUP_GIT_BRANCH:-main}"
+GIT_SSH_KEY="${BACKUP_GIT_SSH_KEY:-}"
 GIT_AUTHOR_NAME="${BACKUP_GIT_AUTHOR_NAME:-server-desk-backup}"
 GIT_AUTHOR_EMAIL="${BACKUP_GIT_AUTHOR_EMAIL:-server-desk-backup@localhost}"
 
@@ -53,6 +54,9 @@ elif ! git symbolic-ref --quiet HEAD >/dev/null 2>&1; then
 fi
 
 if [[ -n "$GIT_REMOTE" ]]; then
+  if [[ -n "$GIT_SSH_KEY" ]]; then
+    export GIT_SSH_COMMAND="ssh -i ${GIT_SSH_KEY} -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+  fi
   if git remote get-url origin >/dev/null 2>&1; then
     git remote set-url origin "$GIT_REMOTE"
   else
