@@ -124,6 +124,9 @@ def local_inspection_command(remote_command: str) -> list[str]:
 
 INSPECTION_SCRIPT = r"""
 set -u
+echo "__SECTION__hostname"
+printf '%s\n' "$(hostname 2>/dev/null || true)"
+printf '%s\n' "$(hostname -f 2>/dev/null || true)"
 echo "__SECTION__os"
 (cat /etc/os-release 2>/dev/null || true) | sed -n '1,12p'
 echo "__SECTION__kernel"
@@ -357,7 +360,10 @@ def build_config_report(output: str) -> tuple[str, str, dict[str, Any], list[dic
     sections = split_sections(output)
     apps = parse_apps(sections.get("apps", []))
     services = parse_services(sections.get("services", []), sections.get("ports", []))
+    hostname_lines = [line.strip() for line in sections.get("hostname", []) if line.strip()]
     report = {
+        "hostname": hostname_lines[0] if hostname_lines else "",
+        "hostname_fqdn": hostname_lines[1] if len(hostname_lines) > 1 else "",
         "os": sections.get("os", []),
         "kernel": "\n".join(sections.get("kernel", [])).strip(),
         "cpu_count": "\n".join(sections.get("cpu", [])).strip(),
@@ -638,14 +644,15 @@ def inspect_server(server_id: int, user=Depends(current_user), conn=Depends(db),
         raise HTTPException(status_code=404, detail="server not found")
     password = c.decrypt(row["credential_encrypted"]) if row["auth_type"] == "password" else ""
     status, summary, report, apps, services = run_server_inspection(row, password)
+    actual_hostname = report.get("hostname") or row["hostname"]
     conn.execute(
         """
-        update servers set config_status = ?, config_summary = ?, config_report_json = ?,
+        update servers set hostname = ?, config_status = ?, config_summary = ?, config_report_json = ?,
           installed_apps_json = ?, services_json = ?, last_config_check_at = current_timestamp,
           updated_at = current_timestamp
         where id = ?
         """,
-        (status, summary, json.dumps(report), json.dumps(apps), json.dumps(services), server_id),
+        (actual_hostname, status, summary, json.dumps(report), json.dumps(apps), json.dumps(services), server_id),
     )
     conn.commit()
     audit(conn, user["username"], "inspect", "server", server_id, summary)

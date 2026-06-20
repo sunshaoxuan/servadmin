@@ -238,6 +238,7 @@ def test_inspect_localhost_records_config_and_services():
         assert body["config_status"] in {"ok", "warning"}
         assert "个应用" in body["config_summary"]
         assert isinstance(body["config_report"], dict)
+        assert "hostname" in body["config_report"]
         assert isinstance(body["installed_apps"], list)
         assert isinstance(body["services"], list)
         if body["installed_apps"]:
