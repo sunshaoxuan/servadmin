@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import socket
 import subprocess
@@ -240,9 +241,7 @@ def parse_services(service_lines: list[str], port_lines: list[str]) -> list[dict
         if not clean:
             continue
         external = any(marker in clean for marker in ("0.0.0.0:", "[::]:", ":::"))
-        key = clean.split()[-1] if clean.split() else clean
-        if key == "*":
-            key = clean
+        key = service_name_from_port_line(clean)
         entry = services.setdefault(
             key,
             {
@@ -258,17 +257,63 @@ def parse_services(service_lines: list[str], port_lines: list[str]) -> list[dict
     return list(services.values())[:120]
 
 
+def service_name_from_port_line(line: str) -> str:
+    match = re.search(r'users:\(\("([^"]+)"', line)
+    if match:
+        return match.group(1)
+    parts = line.split()
+    if not parts:
+        return "unknown-listener"
+    return f"listener:{parts[4] if len(parts) > 4 else parts[-1]}"
+
+
 def service_category(name: str) -> str:
+    custom_prefixes = (
+        "1panel",
+        "bobstudio",
+        "docker",
+        "dovecot",
+        "frp",
+        "frpc",
+        "frps",
+        "gunicorn",
+        "mailinabox",
+        "master",
+        "munin",
+        "named",
+        "nginx",
+        "node",
+        "opendkim",
+        "opendmarc",
+        "php",
+        "postfix",
+        "postgrey",
+        "shadowsocks",
+        "spampd",
+        "ss-",
+        "xfrd",
+        "xray",
+    )
+    custom_names = {
+        "containerd",
+        "containerd.service",
+        "docker.service",
+        "nginx.service",
+        "server-desk.service",
+    }
     system_prefixes = (
         "accounts-",
+        "acpid",
         "apparmor",
         "apt-",
         "chrony",
+        "chronyd",
         "cron",
         "dbus",
         "fwupd",
         "getty@",
         "irqbalance",
+        "listener:",
         "keyboard-",
         "kmod",
         "logrotate",
@@ -282,13 +327,24 @@ def service_category(name: str) -> str:
         "snap.",
         "snapd",
         "ssh.service",
+        "sshd",
         "systemd-",
+        "tailscaled",
         "udisks2",
         "unattended-",
+        "upower",
         "user@",
     )
-    system_names: set[str] = set()
-    return "system" if name in system_names or name.startswith(system_prefixes) else "custom"
+    system_names = {
+        "atd.service",
+        "packagekit.service",
+        "tuned.service",
+    }
+    if name in custom_names or name.startswith(custom_prefixes):
+        return "custom"
+    if name in system_names or name.startswith(system_prefixes):
+        return "system"
+    return "system"
 
 
 def build_config_report(output: str) -> tuple[str, str, dict[str, Any], list[dict[str, str]], list[dict[str, Any]]]:
