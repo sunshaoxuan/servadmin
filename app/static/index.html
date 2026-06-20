@@ -7,7 +7,7 @@
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230f766e'/%3E%3Ctext x='32' y='39' font-size='22' text-anchor='middle' font-family='Arial' font-weight='700' fill='white'%3ESD%3C/text%3E%3C/svg%3E" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0-beta20/dist/css/tabler.min.css" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.28.1/dist/tabler-icons.min.css" />
-    <link rel="stylesheet" href="static/styles.css?v=20260620-infra1" />
+    <link rel="stylesheet" href="static/styles.css?v=20260620-tabs1" />
   </head>
   <body>
     <main id="loginView" class="login-screen">
@@ -96,7 +96,7 @@
         </section>
 
         <section class="main-grid">
-          <div class="left-column">
+          <div class="content-column">
             <section class="server-card card">
               <div class="section-head">
                 <div>
@@ -132,118 +132,131 @@
               </div>
             </section>
 
-            <section class="audit-panel card">
-              <div class="section-head compact">
-                <div>
-                  <h2>最近操作</h2>
-                  <p>登录、检查、编辑和凭据查看都会记录在这里。</p>
-                </div>
+            <section class="detail-card card">
+              <div id="emptyState" class="empty-state">
+                <i class="ti ti-server"></i>
+                <span>选择一台服务器查看详情</span>
               </div>
-              <div class="table-responsive">
-                <table class="table table-sm table-vcenter audit-table">
-                  <thead>
-                    <tr>
-                      <th>操作者</th>
-                      <th>动作</th>
-                      <th>对象</th>
-                      <th>详情</th>
-                      <th>时间</th>
-                    </tr>
-                  </thead>
-                  <tbody id="auditRows"></tbody>
-                </table>
+              <div id="detailPanel" class="detail-panel hidden">
+                <div class="detail-head">
+                  <div>
+                    <span id="detailStatus" class="status online detail-mini-status">online</span>
+                    <h2 id="detailName"></h2>
+                    <p id="detailHost"></p>
+                  </div>
+                  <button class="btn btn-light btn-icon detail-close" type="button" title="收起"><i class="ti ti-x"></i></button>
+                </div>
+
+                <div id="detailTabs" class="detail-tabs">
+                  <button class="active" type="button" data-detail-tab="overview">概览</button>
+                  <button type="button" data-detail-tab="ssh">SSH</button>
+                  <button type="button" data-detail-tab="config">配置</button>
+                  <button type="button" data-detail-tab="apps">应用</button>
+                  <button type="button" data-detail-tab="services">服务</button>
+                  <button type="button" data-detail-tab="notes">备注</button>
+                </div>
+
+                <section class="detail-tab-panel" data-tab-panel="overview">
+                  <dl class="facts">
+                    <dt>IPv4</dt><dd id="detailIpv4"></dd>
+                    <dt>IPv6</dt><dd id="detailIpv6"></dd>
+                    <dt>服务代码</dt><dd id="detailServiceCode"></dd>
+                    <dt>供应商</dt><dd id="detailProviderRegion"></dd>
+                    <dt>标签</dt><dd id="detailTags"></dd>
+                    <dt>创建时间</dt><dd id="detailCreated"></dd>
+                    <dt>更新时间</dt><dd id="detailUpdated"></dd>
+                    <dt>最后检查</dt><dd id="detailCheckedAt"></dd>
+                    <dt>配置检查</dt><dd id="detailConfigStatus"></dd>
+                  </dl>
+                </section>
+
+                <section class="detail-tab-panel hidden" data-tab-panel="ssh">
+                  <dl class="facts">
+                    <dt>登录用户</dt><dd id="detailLoginUser"></dd>
+                    <dt>认证方式</dt><dd id="detailAuthType"></dd>
+                    <dt>SSH 主机</dt><dd id="detailSshHost"></dd>
+                    <dt>SSH 端口</dt><dd id="detailSshPort"></dd>
+                    <dt>密钥路径</dt><dd id="detailSshKeyPath"></dd>
+                    <dt>SSH 参数</dt><dd id="detailSshOptions"></dd>
+                  </dl>
+                  <div class="command-box">
+                    <h3>SSH 连接</h3>
+                    <div class="ssh-line">
+                      <span id="sshCommand"></span>
+                      <button id="copySshBtn" class="btn btn-light btn-icon" title="复制"><i class="ti ti-copy"></i></button>
+                    </div>
+                  </div>
+                  <div class="credential-card">
+                    <h3>凭据</h3>
+                    <div class="credential-line">
+                      <input id="detailCredential" type="password" readonly autocomplete="off" placeholder="正在加载凭据" />
+                      <button id="toggleCredentialBtn" class="btn btn-light btn-icon" type="button" title="显示凭据"><i class="ti ti-eye"></i></button>
+                      <button id="copyCredentialBtn" class="btn btn-light btn-icon" type="button" title="复制凭据"><i class="ti ti-copy"></i></button>
+                    </div>
+                    <small id="credentialStatus">凭据加密存储在服务器数据库中。</small>
+                  </div>
+                </section>
+
+                <section class="detail-tab-panel hidden" data-tab-panel="config">
+                  <div class="inspection-head">
+                    <h3>配置检查</h3>
+                    <span id="inspectionSummary">未检查</span>
+                  </div>
+                  <dl class="facts">
+                    <dt>状态</dt><dd id="detailConfigStatusPanel"></dd>
+                    <dt>系统信息</dt><dd id="detailConfigReport"></dd>
+                  </dl>
+                </section>
+
+                <section class="detail-tab-panel hidden" data-tab-panel="apps">
+                  <div class="inspection-card flat">
+                    <div class="inspection-head">
+                      <h3>已安装应用</h3>
+                      <span id="installedAppsCount">0 项</span>
+                    </div>
+                    <ul id="installedApps" class="inspection-list wide"></ul>
+                  </div>
+                </section>
+
+                <section class="detail-tab-panel hidden" data-tab-panel="services">
+                  <div class="inspection-card flat">
+                    <div class="inspection-head">
+                      <h3>正在提供的服务</h3>
+                      <span id="runningServicesCount">0 项</span>
+                    </div>
+                    <ul id="runningServices" class="inspection-list wide"></ul>
+                  </div>
+                </section>
+
+                <section class="detail-tab-panel hidden" data-tab-panel="notes">
+                  <div class="notes-box" id="detailNotes"></div>
+                </section>
+
+                <div class="quick-card">
+                  <h3>快速操作</h3>
+                  <div class="detail-actions">
+                    <button id="checkBtn" class="btn btn-primary"><i class="ti ti-plug-connected"></i>检查 SSH</button>
+                    <button id="inspectBtn" class="btn btn-light"><i class="ti ti-list-search"></i>检查配置</button>
+                    <button id="editBtn" class="btn btn-light"><i class="ti ti-pencil"></i>编辑</button>
+                    <button id="revealBtn" class="btn btn-danger-lt"><i class="ti ti-eye"></i>显示凭据</button>
+                  </div>
+                </div>
               </div>
             </section>
           </div>
 
-          <aside class="detail-card card">
-            <div id="emptyState" class="empty-state">
-              <i class="ti ti-server"></i>
-              <span>选择一台服务器查看详情</span>
+          <aside id="auditDrawer" class="audit-drawer card">
+            <div class="section-head compact audit-head">
+              <div>
+                <h2>最近操作</h2>
+                <p>审计记录</p>
+              </div>
+              <button id="toggleAuditBtn" class="btn btn-light btn-icon" type="button" title="收缩"><i class="ti ti-layout-sidebar-right-collapse"></i></button>
             </div>
-            <div id="detailPanel" class="detail-panel hidden">
-              <div class="detail-head">
-                <div>
-                  <span id="detailStatus" class="status online detail-mini-status">online</span>
-                  <h2 id="detailName"></h2>
-                  <p id="detailHost"></p>
-                </div>
-                <button class="btn btn-light btn-icon detail-close" type="button" title="收起"><i class="ti ti-x"></i></button>
-              </div>
-
-              <div class="detail-tabs">
-                <span class="active">概览</span>
-                <span>SSH</span>
-                <span>配置</span>
-                <span>服务</span>
-                <span>备注</span>
-              </div>
-
-              <dl class="facts">
-                <dt>IPv4</dt><dd id="detailIpv4"></dd>
-                <dt>IPv6</dt><dd id="detailIpv6"></dd>
-                <dt>登录用户</dt><dd id="detailLoginUser"></dd>
-                <dt>认证方式</dt><dd id="detailAuthType"></dd>
-                <dt>SSH 主机</dt><dd id="detailSshHost"></dd>
-                <dt>SSH 端口</dt><dd id="detailSshPort"></dd>
-                <dt>密钥路径</dt><dd id="detailSshKeyPath"></dd>
-                <dt>SSH 参数</dt><dd id="detailSshOptions"></dd>
-                <dt>服务代码</dt><dd id="detailServiceCode"></dd>
-                <dt>供应商</dt><dd id="detailProviderRegion"></dd>
-                <dt>标签</dt><dd id="detailTags"></dd>
-                <dt>备注</dt><dd id="detailNotes"></dd>
-                <dt>创建时间</dt><dd id="detailCreated"></dd>
-                <dt>更新时间</dt><dd id="detailUpdated"></dd>
-                <dt>最后检查</dt><dd id="detailCheckedAt"></dd>
-                <dt>配置检查</dt><dd id="detailConfigStatus"></dd>
-                <dt>系统信息</dt><dd id="detailConfigReport"></dd>
-              </dl>
-
-              <div class="credential-card">
-                <h3>凭据</h3>
-                <div class="credential-line">
-                  <input id="detailCredential" type="password" readonly autocomplete="off" placeholder="正在加载凭据" />
-                  <button id="toggleCredentialBtn" class="btn btn-light btn-icon" type="button" title="显示凭据"><i class="ti ti-eye"></i></button>
-                  <button id="copyCredentialBtn" class="btn btn-light btn-icon" type="button" title="复制凭据"><i class="ti ti-copy"></i></button>
-                </div>
-                <small id="credentialStatus">凭据加密存储在服务器数据库中。</small>
-              </div>
-
-              <div class="inspection-card">
-                <div class="inspection-head">
-                  <h3>应用与服务</h3>
-                  <span id="inspectionSummary">未检查</span>
-                </div>
-                <div class="inspection-columns">
-                  <div>
-                    <strong>已安装应用</strong>
-                    <ul id="installedApps"></ul>
-                  </div>
-                  <div>
-                    <strong>正在提供的服务</strong>
-                    <ul id="runningServices"></ul>
-                  </div>
-                </div>
-              </div>
-
-              <div class="quick-card">
-                <h3>快速操作</h3>
-                <div class="detail-actions">
-                  <button id="checkBtn" class="btn btn-primary"><i class="ti ti-plug-connected"></i>检查 SSH</button>
-                  <button id="inspectBtn" class="btn btn-light"><i class="ti ti-list-search"></i>检查配置</button>
-                  <button id="editBtn" class="btn btn-light"><i class="ti ti-pencil"></i>编辑</button>
-                  <button id="revealBtn" class="btn btn-danger-lt"><i class="ti ti-eye"></i>显示凭据</button>
-                </div>
-              </div>
-
-              <div class="command-box">
-                <h3>SSH 连接</h3>
-                <div class="ssh-line">
-                  <span id="sshCommand"></span>
-                  <button id="copySshBtn" class="btn btn-light btn-icon" title="复制"><i class="ti ti-copy"></i></button>
-                </div>
-              </div>
+            <div class="audit-content">
+              <div id="auditRows" class="audit-list"></div>
             </div>
+            <button id="expandAuditBtn" class="audit-expand btn btn-light btn-icon" type="button" title="展开"><i class="ti ti-history"></i></button>
           </aside>
         </section>
       </section>
@@ -283,6 +296,6 @@
       </form>
     </dialog>
 
-    <script src="static/app.js?v=20260620-infra1"></script>
+    <script src="static/app.js?v=20260620-tabs1"></script>
   </body>
 </html>

@@ -1,4 +1,12 @@
-const state = { servers: [], selectedId: null, audit: [], credentials: {}, credentialRequests: {} };
+const state = {
+  servers: [],
+  selectedId: null,
+  audit: [],
+  activeDetailTab: "overview",
+  auditCollapsed: false,
+  credentials: {},
+  credentialRequests: {},
+};
 
 const $ = (id) => document.getElementById(id);
 const basePath = window.location.pathname.endsWith("/") ? window.location.pathname : `${window.location.pathname}/`;
@@ -98,6 +106,7 @@ function render() {
 
   renderDetail();
   renderAudit();
+  renderAuditDrawer();
 }
 
 function rowHtml(s) {
@@ -149,6 +158,7 @@ function renderDetail() {
   $("detailHost").textContent = s.hostname;
   $("detailStatus").textContent = s.last_status;
   $("detailStatus").className = `status ${s.last_status}`;
+  renderDetailTabs();
   $("detailIpv4").textContent = s.ipv4 || "未设置";
   $("detailIpv6").textContent = s.ipv6 || "未设置";
   $("detailLoginUser").textContent = s.login_user || "未设置";
@@ -165,26 +175,45 @@ function renderDetail() {
   $("detailUpdated").textContent = formatDateTime(s.updated_at);
   $("detailCheckedAt").textContent = formatDateTime(s.last_checked_at);
   $("detailConfigStatus").innerHTML = `<span class="status config-${escapeHtml(s.config_status || "unknown")}">${escapeHtml(configLabel(s.config_status))}</span> ${escapeHtml(s.config_summary || "未检查")}`;
+  $("detailConfigStatusPanel").innerHTML = `<span class="status config-${escapeHtml(s.config_status || "unknown")}">${escapeHtml(configLabel(s.config_status))}</span> ${escapeHtml(s.config_summary || "未检查")}`;
   $("detailConfigReport").innerHTML = configReportHtml(s.config_report || {});
   $("inspectionSummary").textContent = s.last_config_check_at ? `检查时间 ${formatDateTime(s.last_config_check_at)}` : "未检查";
+  $("installedAppsCount").textContent = `${(s.installed_apps || []).length} 项`;
+  $("runningServicesCount").textContent = `${(s.services || []).length} 项`;
   $("installedApps").innerHTML = listAppsHtml(s.installed_apps || []);
   $("runningServices").innerHTML = listServicesHtml(s.services || []);
   $("sshCommand").textContent = sshCommand(s);
   renderCredentialField(s);
 }
 
+function renderDetailTabs() {
+  document.querySelectorAll("[data-detail-tab]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.detailTab === state.activeDetailTab);
+  });
+  document.querySelectorAll("[data-tab-panel]").forEach((panel) => {
+    panel.classList.toggle("hidden", panel.dataset.tabPanel !== state.activeDetailTab);
+  });
+}
+
 function renderAudit() {
   $("auditRows").innerHTML = state.audit.length
     ? state.audit.map((a) => `
-      <tr>
-        <td data-label="操作者">${escapeHtml(a.actor)}</td>
-        <td data-label="动作"><span class="audit-action ${escapeHtml(a.action)}">${escapeHtml(actionLabel(a.action))}</span></td>
-        <td data-label="对象">${escapeHtml(a.target_type)} #${escapeHtml(a.target_id || "")}</td>
-        <td data-label="详情">${escapeHtml(a.detail || "无")}</td>
-        <td data-label="时间">${escapeHtml((a.created_at || "").slice(0, 19))}</td>
-      </tr>
+      <article class="audit-item">
+        <div class="audit-item-top">
+          <span class="audit-action ${escapeHtml(a.action)}">${escapeHtml(actionLabel(a.action))}</span>
+          <time>${escapeHtml((a.created_at || "").slice(5, 16))}</time>
+        </div>
+        <strong>${escapeHtml(a.actor)}</strong>
+        <span>${escapeHtml(a.target_type)} #${escapeHtml(a.target_id || "")}</span>
+        <p>${escapeHtml(a.detail || "无")}</p>
+      </article>
     `).join("")
-    : `<tr><td colspan="5" class="text-secondary text-center py-4">暂无审计记录</td></tr>`;
+    : `<div class="text-secondary text-center py-4">暂无审计记录</div>`;
+}
+
+function renderAuditDrawer() {
+  $("auditDrawer").classList.toggle("collapsed", state.auditCollapsed);
+  $("toggleAuditBtn").title = state.auditCollapsed ? "展开" : "收缩";
 }
 
 function openForm(server = null) {
@@ -343,14 +372,15 @@ function configReportHtml(report) {
 
 function listAppsHtml(apps) {
   if (!apps.length) return `<li class="muted-item">未记录</li>`;
-  return apps.slice(0, 20).map((app) => `<li><span>${escapeHtml(app.name)}</span><small>${escapeHtml(app.version || "")}</small></li>`).join("");
+  return apps.map((app) => `<li><span>${escapeHtml(app.name)}</span><small>${escapeHtml(app.version || "")}</small></li>`).join("");
 }
 
 function listServicesHtml(services) {
   if (!services.length) return `<li class="muted-item">未记录</li>`;
-  return services.slice(0, 30).map((service) => {
+  return services.map((service) => {
     const exposure = service.external ? "外部可访问" : "内部监听";
-    return `<li><span>${escapeHtml(service.name)}</span><small>${escapeHtml(exposure)}</small></li>`;
+    const ports = (service.ports || []).slice(0, 3).join(" / ");
+    return `<li><span>${escapeHtml(service.name)}</span><small>${escapeHtml(exposure)}${ports ? ` · ${escapeHtml(ports)}` : ""}</small></li>`;
   }).join("");
 }
 
@@ -391,10 +421,24 @@ $("refreshBtn").addEventListener("click", loadAll);
 $("addBtn").addEventListener("click", () => openForm());
 $("editBtn").addEventListener("click", () => openForm(selected()));
 $("searchBox").addEventListener("input", render);
+$("detailTabs").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-detail-tab]");
+  if (!button) return;
+  state.activeDetailTab = button.dataset.detailTab;
+  renderDetailTabs();
+});
 $("detailPanel").addEventListener("click", (event) => {
   if (!event.target.closest(".detail-close")) return;
   state.selectedId = null;
   render();
+});
+$("toggleAuditBtn").addEventListener("click", () => {
+  state.auditCollapsed = true;
+  renderAuditDrawer();
+});
+$("expandAuditBtn").addEventListener("click", () => {
+  state.auditCollapsed = false;
+  renderAuditDrawer();
 });
 $("closeDialog").addEventListener("click", () => $("serverDialog").close());
 $("cancelBtn").addEventListener("click", () => $("serverDialog").close());
