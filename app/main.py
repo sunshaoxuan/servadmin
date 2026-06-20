@@ -211,7 +211,7 @@ def build_config_report(output: str) -> tuple[str, str, dict[str, Any], list[dic
         "disk_root": "\n".join(sections.get("disk", [])).strip(),
     }
     status = "ok" if report["kernel"] else "warning"
-    summary = f"{len(apps)} apps, {len(services)} services"
+    summary = f"{len(apps)} 个应用，{len(services)} 个服务"
     return status, summary, report, apps, services
 
 

@@ -87,7 +87,7 @@ def test_static_and_index_are_not_cached():
         response = client.get("/")
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
-        assert "static/styles.css?v=20260620-tabs1" in response.text
+        assert "static/styles.css?v=20260620-cn1" in response.text
         assert 'id="detailCredential"' in response.text
 
         response = client.get("/static/styles.css")
@@ -130,7 +130,7 @@ def test_inspect_localhost_records_config_and_services():
         assert response.status_code == 200
         body = response.json()
         assert body["config_status"] in {"ok", "warning"}
-        assert "apps" in body["config_summary"]
+        assert "个应用" in body["config_summary"]
         assert isinstance(body["config_report"], dict)
         assert isinstance(body["installed_apps"], list)
         assert isinstance(body["services"], list)

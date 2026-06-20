@@ -102,7 +102,7 @@ function render() {
   $("summaryText").textContent = `${rows.length} 台可见，${online} 台在线`;
   $("tableCount").textContent = `${rows.length} 台可见`;
   $("assetFooterCount").textContent = `共 ${rows.length} 条`;
-  $("summaryOnlineBadge").textContent = `${online} online`;
+  $("summaryOnlineBadge").textContent = `${online} 台在线`;
 
   renderDetail();
   renderAudit();
@@ -127,7 +127,7 @@ function rowHtml(s) {
         <strong>${escapeHtml(s.login_user)}</strong>
         <span class="server-sub">${escapeHtml(authLabel(s.auth_type))}</span>
       </td>
-      <td data-label="状态"><span class="status ${escapeHtml(s.last_status)}">${escapeHtml(s.last_status)}</span></td>
+      <td data-label="状态"><span class="status ${escapeHtml(s.last_status)}">${escapeHtml(statusLabel(s.last_status))}</span></td>
       <td data-label="配置">
         <span class="status config-${escapeHtml(s.config_status || "unknown")}">${escapeHtml(configLabel(s.config_status))}</span>
         <span class="server-sub">${escapeHtml(s.config_summary || "未检查")}</span>
@@ -156,7 +156,7 @@ function renderDetail() {
   $("detailPanel").classList.remove("hidden");
   $("detailName").textContent = s.name;
   $("detailHost").textContent = s.hostname;
-  $("detailStatus").textContent = s.last_status;
+  $("detailStatus").textContent = statusLabel(s.last_status);
   $("detailStatus").className = `status ${s.last_status}`;
   renderDetailTabs();
   $("detailIpv4").textContent = s.ipv4 || "未设置";
@@ -323,7 +323,15 @@ async function showCredential(visible) {
 }
 
 function authLabel(value) {
-  return value === "key" ? "SSH Key" : "password";
+  return value === "key" ? "密钥" : "密码";
+}
+
+function statusLabel(value) {
+  return {
+    online: "在线",
+    offline: "离线",
+    unknown: "未检查",
+  }[value || "unknown"] || value;
 }
 
 function configLabel(value) {
