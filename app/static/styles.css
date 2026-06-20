@@ -583,6 +583,34 @@ label {
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   max-height: 440px;
 }
+.app-groups {
+  display: grid;
+  gap: 10px;
+}
+.app-group {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+.app-group summary {
+  align-items: center;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  font-size: 13px;
+  font-weight: 800;
+  justify-content: space-between;
+  padding: 10px 12px;
+}
+.app-group summary span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+.app-group .inspection-list {
+  border-top: 1px solid var(--line);
+  padding: 10px;
+}
 .inspection-list li,
 .inspection-columns li {
   background: #f7fbfa;

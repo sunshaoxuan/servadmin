@@ -379,11 +379,43 @@ function configReportHtml(report) {
 }
 
 function listAppsHtml(apps) {
+  if (!apps.length) return `<div class="muted-item">未记录</div>`;
+  const custom = apps.filter((app) => (app.category || "custom") !== "system");
+  const system = apps.filter((app) => app.category === "system");
+  return `
+    <details class="app-group" open>
+      <summary>自装应用 <span>${custom.length} 项</span></summary>
+      <ul class="inspection-list wide">${appItemsHtml(custom)}</ul>
+    </details>
+    <details class="app-group">
+      <summary>系统基础应用 <span>${system.length} 项</span></summary>
+      <ul class="inspection-list wide">${appItemsHtml(system)}</ul>
+    </details>
+  `;
+}
+
+function appItemsHtml(apps) {
   if (!apps.length) return `<li class="muted-item">未记录</li>`;
   return apps.map((app) => `<li><span>${escapeHtml(app.name)}</span><small>${escapeHtml(app.version || "")}</small></li>`).join("");
 }
 
 function listServicesHtml(services) {
+  if (!services.length) return `<div class="muted-item">未记录</div>`;
+  const custom = services.filter((service) => (service.category || "custom") !== "system");
+  const system = services.filter((service) => service.category === "system");
+  return `
+    <details class="app-group" open>
+      <summary>自装服务 <span>${custom.length} 项</span></summary>
+      <ul class="inspection-list wide">${serviceItemsHtml(custom)}</ul>
+    </details>
+    <details class="app-group">
+      <summary>系统基础服务 <span>${system.length} 项</span></summary>
+      <ul class="inspection-list wide">${serviceItemsHtml(system)}</ul>
+    </details>
+  `;
+}
+
+function serviceItemsHtml(services) {
   if (!services.length) return `<li class="muted-item">未记录</li>`;
   return services.map((service) => {
     const exposure = service.external ? "外部可访问" : "内部监听";

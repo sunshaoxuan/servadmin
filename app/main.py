@@ -174,8 +174,73 @@ def parse_apps(lines: list[str]) -> list[dict[str, str]]:
             parts = clean.split(maxsplit=1)
             name = parts[0]
             version = parts[1] if len(parts) > 1 else ""
-        apps.append({"name": name, "version": version})
+        apps.append({"name": name, "version": version, "category": app_category(name)})
     return apps
+
+
+def app_category(name: str) -> str:
+    system_prefixes = (
+        "acl",
+        "adduser",
+        "apt",
+        "base-",
+        "bash",
+        "bsd",
+        "busybox",
+        "coreutils",
+        "dash",
+        "dbus",
+        "debconf",
+        "debianutils",
+        "diffutils",
+        "dpkg",
+        "e2fsprogs",
+        "findutils",
+        "gcc-",
+        "gpg",
+        "grep",
+        "gzip",
+        "init",
+        "iptables",
+        "kbd",
+        "kmod",
+        "lib",
+        "linux-",
+        "locales",
+        "login",
+        "lsb-",
+        "mawk",
+        "mount",
+        "ncurses-",
+        "netbase",
+        "passwd",
+        "perl",
+        "procps",
+        "python3",
+        "readline-",
+        "sed",
+        "sensible-utils",
+        "systemd",
+        "sysv",
+        "tar",
+        "tzdata",
+        "ubuntu-",
+        "ucf",
+        "udev",
+        "util-linux",
+        "zlib",
+    )
+    system_names = {
+        "hostname",
+        "iproute2",
+        "iputils-ping",
+        "netplan.io",
+        "openssh-client",
+        "openssh-server",
+        "sudo",
+        "vim",
+    }
+    return "system" if name in system_names or name.startswith(system_prefixes) else "custom"
 
 
 def parse_services(service_lines: list[str], port_lines: list[str]) -> list[dict[str, Any]]:
@@ -185,7 +250,13 @@ def parse_services(service_lines: list[str], port_lines: list[str]) -> list[dict
         if not clean:
             continue
         name = clean.split()[0]
-        services[name] = {"name": name, "state": "running", "ports": [], "external": False}
+        services[name] = {
+            "name": name,
+            "state": "running",
+            "ports": [],
+            "external": False,
+            "category": service_category(name),
+        }
     for line in port_lines:
         clean = line.strip()
         if not clean:
@@ -194,10 +265,56 @@ def parse_services(service_lines: list[str], port_lines: list[str]) -> list[dict
         key = clean.split()[-1] if clean.split() else clean
         if key == "*":
             key = clean
-        entry = services.setdefault(key, {"name": key, "state": "listening", "ports": [], "external": False})
+        entry = services.setdefault(
+            key,
+            {
+                "name": key,
+                "state": "listening",
+                "ports": [],
+                "external": False,
+                "category": service_category(key),
+            },
+        )
         entry["ports"].append(clean)
         entry["external"] = entry["external"] or external
     return list(services.values())[:120]
+
+
+def service_category(name: str) -> str:
+    system_prefixes = (
+        "accounts-",
+        "apparmor",
+        "apt-",
+        "chrony",
+        "cron",
+        "dbus",
+        "fwupd",
+        "getty@",
+        "irqbalance",
+        "keyboard-",
+        "kmod",
+        "logrotate",
+        "lvm",
+        "ModemManager",
+        "multipathd",
+        "networkd-",
+        "polkit",
+        "rsyslog",
+        "serial-getty@",
+        "snap.",
+        "snapd",
+        "ssh.service",
+        "systemd-",
+        "udisks2",
+        "unattended-",
+        "user@",
+    )
+    system_names = {
+        "containerd.service",
+        "docker.service",
+        "nginx.service",
+    }
+    return "system" if name in system_names or name.startswith(system_prefixes) else "custom"
 
 
 def build_config_report(output: str) -> tuple[str, str, dict[str, Any], list[dict[str, str]], list[dict[str, Any]]]:
