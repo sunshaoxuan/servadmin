@@ -28,7 +28,12 @@ create table if not exists servers (
   ssh_host text,
   ssh_port integer not null default 22,
   ssh_key_path text,
+  ssh_local_key_path text,
+  ssh_windows_key_path text,
   ssh_options text,
+  panel_url text,
+  panel_username text,
+  panel_password_encrypted text,
   service_code text,
   is_starred integer not null default 0,
   tags_json text not null default '[]',
@@ -62,7 +67,12 @@ SERVER_MIGRATIONS = {
     "ssh_host": "alter table servers add column ssh_host text",
     "ssh_port": "alter table servers add column ssh_port integer not null default 22",
     "ssh_key_path": "alter table servers add column ssh_key_path text",
+    "ssh_local_key_path": "alter table servers add column ssh_local_key_path text",
+    "ssh_windows_key_path": "alter table servers add column ssh_windows_key_path text",
     "ssh_options": "alter table servers add column ssh_options text",
+    "panel_url": "alter table servers add column panel_url text",
+    "panel_username": "alter table servers add column panel_username text",
+    "panel_password_encrypted": "alter table servers add column panel_password_encrypted text",
     "is_starred": "alter table servers add column is_starred integer not null default 0",
     "config_status": "alter table servers add column config_status text not null default 'unknown'",
     "config_summary": "alter table servers add column config_summary text",
@@ -101,5 +111,7 @@ def row_to_server(row: sqlite3.Row) -> dict[str, Any]:
     data["config_report"] = json.loads(data.pop("config_report_json") or "{}")
     data["installed_apps"] = json.loads(data.pop("installed_apps_json") or "[]")
     data["services"] = json.loads(data.pop("services_json") or "[]")
+    data["has_panel_password"] = bool(data.get("panel_password_encrypted"))
+    data.pop("panel_password_encrypted", None)
     data.pop("credential_encrypted", None)
     return data

@@ -41,7 +41,12 @@ def test_login_create_reveal_and_audit():
                 "ssh_host": "127.0.0.1",
                 "ssh_port": 2222,
                 "ssh_key_path": "/home/ops/.ssh/id_ed25519",
+                "ssh_local_key_path": "/Users/shou/.ssh/id_ed25519",
+                "ssh_windows_key_path": "C:\\Users\\shou\\.ssh\\id_ed25519",
                 "ssh_options": "-o UserKnownHostsFile=/tmp/known_hosts",
+                "panel_url": "http://127.0.0.1:8091/entrance",
+                "panel_username": "panel-admin",
+                "panel_password": "panel-secret",
                 "service_code": "113801369753",
                 "is_starred": True,
                 "tags": ["tokyo", "prod"],
@@ -56,17 +61,28 @@ def test_login_create_reveal_and_audit():
         assert body["ssh_host"] == "127.0.0.1"
         assert body["ssh_port"] == 2222
         assert body["ssh_key_path"] == "/home/ops/.ssh/id_ed25519"
+        assert body["ssh_local_key_path"] == "/Users/shou/.ssh/id_ed25519"
+        assert body["ssh_windows_key_path"] == "C:\\Users\\shou\\.ssh\\id_ed25519"
+        assert body["panel_url"] == "http://127.0.0.1:8091/entrance"
+        assert body["panel_username"] == "panel-admin"
+        assert body["has_panel_password"] is True
+        assert "panel_password_encrypted" not in body
         assert body["is_starred"] is True
 
         response = client.get(f"/api/servers/{body['id']}/credential")
         assert response.status_code == 200
         assert response.json()["credential"] == "secret-value"
 
+        response = client.get(f"/api/servers/{body['id']}/connection-secret")
+        assert response.status_code == 200
+        assert response.json()["panel_password"] == "panel-secret"
+
         response = client.get("/api/audit")
         assert response.status_code == 200
         actions = [row["action"] for row in response.json()]
         assert "create" in actions
         assert "reveal_credential" in actions
+        assert "reveal_connection_secret" in actions
     finally:
         os.unlink(db_path)
 

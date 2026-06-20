@@ -149,7 +149,7 @@
 
                 <div id="detailTabs" class="detail-tabs">
                   <button class="active" type="button" data-detail-tab="overview">概览</button>
-                  <button type="button" data-detail-tab="ssh">SSH</button>
+                  <button type="button" data-detail-tab="ssh">连接</button>
                   <button type="button" data-detail-tab="config">配置</button>
                   <button type="button" data-detail-tab="apps">应用</button>
                   <button type="button" data-detail-tab="services">服务</button>
@@ -176,15 +176,39 @@
                     <dt>认证方式</dt><dd id="detailAuthType"></dd>
                     <dt>SSH 主机</dt><dd id="detailSshHost"></dd>
                     <dt>SSH 端口</dt><dd id="detailSshPort"></dd>
-                    <dt>密钥路径</dt><dd id="detailSshKeyPath"></dd>
+                    <dt>检查密钥路径</dt><dd id="detailSshKeyPath"></dd>
+                    <dt>Mac/Linux 密钥路径</dt><dd id="detailSshLocalKeyPath"></dd>
+                    <dt>Windows 密钥路径</dt><dd id="detailSshWindowsKeyPath"></dd>
                     <dt>SSH 参数</dt><dd id="detailSshOptions"></dd>
                   </dl>
                   <div class="command-box">
-                    <h3>SSH 连接</h3>
+                    <h3>Mac/Linux SSH</h3>
                     <div class="ssh-line">
-                      <span id="sshCommand"></span>
-                      <button id="copySshBtn" class="btn btn-light btn-icon" title="复制"><i class="ti ti-copy"></i></button>
+                      <span id="sshCommandUnix"></span>
+                      <button id="copySshUnixBtn" class="btn btn-light btn-icon" title="复制"><i class="ti ti-copy"></i></button>
                     </div>
+                    <small id="sshUnixHint"></small>
+                  </div>
+                  <div class="command-box">
+                    <h3>Windows SSH</h3>
+                    <div class="ssh-line">
+                      <span id="sshCommandWindows"></span>
+                      <button id="copySshWindowsBtn" class="btn btn-light btn-icon" title="复制"><i class="ti ti-copy"></i></button>
+                    </div>
+                    <small id="sshWindowsHint"></small>
+                  </div>
+                  <div class="credential-card">
+                    <h3>1Panel</h3>
+                    <dl class="facts compact-facts">
+                      <dt>地址</dt><dd><a id="detailPanelUrl" href="#" target="_blank" rel="noreferrer">未设置</a></dd>
+                      <dt>用户</dt><dd id="detailPanelUser"></dd>
+                    </dl>
+                    <div class="credential-line">
+                      <input id="detailPanelPassword" type="password" readonly autocomplete="off" placeholder="未加载面板密码" />
+                      <button id="togglePanelPasswordBtn" class="btn btn-light btn-icon" type="button" title="显示面板密码"><i class="ti ti-eye"></i></button>
+                      <button id="copyPanelPasswordBtn" class="btn btn-light btn-icon" type="button" title="复制面板密码"><i class="ti ti-copy"></i></button>
+                    </div>
+                    <small id="panelPasswordStatus">面板密码加密存储。</small>
                   </div>
                   <div class="credential-card">
                     <h3>凭据</h3>
@@ -280,12 +304,17 @@
           <label>认证方式<select id="auth_type"><option value="password">密码</option><option value="key">密钥</option></select></label>
           <label>SSH 主机<input id="ssh_host" placeholder="留空使用 IPv4 或主机名" /></label>
           <label>SSH 端口<input id="ssh_port" type="number" min="1" max="65535" value="22" /></label>
-          <label>SSH 密钥路径<input id="ssh_key_path" placeholder="/home/ops/.ssh/id_ed25519" /></label>
+          <label>检查密钥路径<input id="ssh_key_path" placeholder="/etc/server-desk/ssh/id_ed25519" /></label>
+          <label>Mac/Linux 密钥路径<input id="ssh_local_key_path" placeholder="/Users/name/.ssh/id_ed25519" /></label>
+          <label>Windows 密钥路径<input id="ssh_windows_key_path" placeholder="C:\\Users\\name\\.ssh\\id_ed25519" /></label>
           <label>SSH 参数<input id="ssh_options" placeholder="-o ProxyJump=bastion" /></label>
+          <label>1Panel 地址<input id="panel_url" placeholder="http://host:port/entrance" /></label>
+          <label>1Panel 用户<input id="panel_username" /></label>
           <label>服务代码<input id="service_code" /></label>
           <label>标签<input id="tags" placeholder="prod, tokyo, web" /></label>
           <label class="checkbox-field"><input id="is_starred" type="checkbox" /> 标星</label>
         </div>
+        <label>1Panel 密码<input id="panel_password" type="password" placeholder="编辑时留空表示不修改" /></label>
         <label>凭据<input id="credential" type="password" placeholder="密码、密钥口令或需要加密保存的连接凭据，编辑时留空表示不修改" /></label>
         <label>备注<textarea id="notes" rows="4"></textarea></label>
         <div class="dialog-actions">

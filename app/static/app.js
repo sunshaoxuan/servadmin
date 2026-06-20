@@ -5,7 +5,9 @@ const state = {
   activeDetailTab: "overview",
   auditCollapsed: false,
   credentials: {},
+  connectionSecrets: {},
   credentialRequests: {},
+  connectionSecretRequests: {},
 };
 
 const $ = (id) => document.getElementById(id);
@@ -166,7 +168,10 @@ function renderDetail() {
   $("detailSshHost").textContent = s.ssh_host || s.ipv4 || s.hostname || "未设置";
   $("detailSshPort").textContent = s.ssh_port || 22;
   $("detailSshKeyPath").textContent = s.ssh_key_path || "未设置";
+  $("detailSshLocalKeyPath").textContent = s.ssh_local_key_path || "未设置";
+  $("detailSshWindowsKeyPath").textContent = s.ssh_windows_key_path || "未设置";
   $("detailSshOptions").textContent = s.ssh_options || "未设置";
+  renderPanelConnection(s);
   $("detailServiceCode").textContent = s.service_code || "未设置";
   $("detailProviderRegion").textContent = [s.provider, s.region].filter(Boolean).join(" / ") || "未设置";
   $("detailTags").innerHTML = (s.tags || []).map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join("") || "未设置";
@@ -182,8 +187,9 @@ function renderDetail() {
   $("runningServicesCount").textContent = `${(s.services || []).length} 项`;
   $("installedApps").innerHTML = listAppsHtml(s.installed_apps || []);
   $("runningServices").innerHTML = listServicesHtml(s.services || []);
-  $("sshCommand").textContent = sshCommand(s);
+  renderSshCommands(s);
   renderCredentialField(s);
+  renderPanelPasswordField(s);
 }
 
 function renderDetailTabs() {
@@ -220,12 +226,13 @@ function renderAuditDrawer() {
 function openForm(server = null) {
   $("dialogTitle").textContent = server ? "编辑服务器" : "新增服务器";
   $("serverId").value = server?.id || "";
-  for (const id of ["name", "hostname", "ipv4", "ipv6", "provider", "region", "login_user", "auth_type", "ssh_host", "ssh_port", "ssh_key_path", "ssh_options", "service_code", "notes"]) {
+  for (const id of ["name", "hostname", "ipv4", "ipv6", "provider", "region", "login_user", "auth_type", "ssh_host", "ssh_port", "ssh_key_path", "ssh_local_key_path", "ssh_windows_key_path", "ssh_options", "panel_url", "panel_username", "service_code", "notes"]) {
     $(id).value = server?.[id] || "";
   }
   $("ssh_port").value = server?.ssh_port || 22;
   $("is_starred").checked = Boolean(server?.is_starred);
   $("tags").value = (server?.tags || []).join(", ");
+  $("panel_password").value = "";
   $("credential").value = "";
   $("deleteBtn").classList.toggle("hidden", !server);
   $("serverDialog").showModal();
@@ -244,13 +251,41 @@ function payloadFromForm() {
     ssh_host: $("ssh_host").value.trim(),
     ssh_port: Number($("ssh_port").value || 22),
     ssh_key_path: $("ssh_key_path").value.trim(),
+    ssh_local_key_path: $("ssh_local_key_path").value.trim(),
+    ssh_windows_key_path: $("ssh_windows_key_path").value.trim(),
     ssh_options: $("ssh_options").value.trim(),
+    panel_url: $("panel_url").value.trim(),
+    panel_username: $("panel_username").value.trim(),
+    panel_password: $("panel_password").value,
     service_code: $("service_code").value.trim(),
     is_starred: $("is_starred").checked,
     tags: $("tags").value.split(",").map((x) => x.trim()).filter(Boolean),
     credential: $("credential").value,
     notes: $("notes").value.trim(),
   };
+}
+
+function renderPanelConnection(server) {
+  const link = $("detailPanelUrl");
+  if (server.panel_url) {
+    link.href = server.panel_url;
+    link.textContent = server.panel_url;
+    link.classList.remove("disabled-link");
+  } else {
+    link.removeAttribute("href");
+    link.textContent = "未设置";
+    link.classList.add("disabled-link");
+  }
+  $("detailPanelUser").textContent = server.panel_username || "未设置";
+}
+
+function renderSshCommands(server) {
+  const unix = sshCommand(server, "unix");
+  const windows = sshCommand(server, "windows");
+  $("sshCommandUnix").textContent = unix.command;
+  $("sshCommandWindows").textContent = windows.command;
+  $("sshUnixHint").textContent = unix.hint;
+  $("sshWindowsHint").textContent = windows.hint;
 }
 
 function selected() {
@@ -273,6 +308,30 @@ function renderCredentialField(server) {
   input.placeholder = "正在加载凭据";
   $("credentialStatus").textContent = "正在从加密存储中读取凭据。";
   loadCredential(server.id);
+}
+
+function renderPanelPasswordField(server) {
+  const input = $("detailPanelPassword");
+  input.type = "password";
+  updatePanelPasswordToggle(false);
+  if (!server.panel_url && !server.panel_username && !server.has_panel_password) {
+    input.value = "";
+    input.placeholder = "未设置 1Panel";
+    $("panelPasswordStatus").textContent = "这台服务器没有保存 1Panel 信息。";
+    return;
+  }
+  const cached = Object.prototype.hasOwnProperty.call(state.connectionSecrets, server.id);
+  if (cached) {
+    const value = state.connectionSecrets[server.id]?.panel_password || "";
+    input.value = value;
+    input.placeholder = value ? "" : "未保存面板密码";
+    $("panelPasswordStatus").textContent = value ? "面板密码已加载，默认遮蔽显示。" : "这台服务器没有保存面板密码。";
+    return;
+  }
+  input.value = "";
+  input.placeholder = "正在加载面板密码";
+  $("panelPasswordStatus").textContent = "正在从加密存储中读取面板密码。";
+  loadConnectionSecret(server.id);
 }
 
 async function loadCredential(serverId, options = {}) {
@@ -309,11 +368,51 @@ async function loadCredential(serverId, options = {}) {
   return state.credentialRequests[serverId];
 }
 
+async function loadConnectionSecret(serverId, options = {}) {
+  if (!options.force && Object.prototype.hasOwnProperty.call(state.connectionSecrets, serverId)) {
+    return state.connectionSecrets[serverId];
+  }
+  if (!options.force && state.connectionSecretRequests[serverId]) {
+    return state.connectionSecretRequests[serverId];
+  }
+  state.connectionSecretRequests[serverId] = api(`/api/servers/${serverId}/connection-secret`)
+    .then(async (data) => {
+      state.connectionSecrets[serverId] = data;
+      if (selected()?.id === serverId) {
+        const value = data.panel_password || "";
+        $("detailPanelPassword").value = value;
+        $("detailPanelPassword").placeholder = value ? "" : "未保存面板密码";
+        $("panelPasswordStatus").textContent = value ? "面板密码已加载，默认遮蔽显示。" : "这台服务器没有保存面板密码。";
+      }
+      state.audit = await api("/api/audit");
+      renderAudit();
+      return data;
+    })
+    .catch((error) => {
+      if (selected()?.id === serverId) {
+        $("detailPanelPassword").value = "";
+        $("detailPanelPassword").placeholder = "面板密码读取失败";
+        $("panelPasswordStatus").textContent = error.message || "面板密码读取失败。";
+      }
+      return { credential: "", panel_password: "" };
+    })
+    .finally(() => {
+      delete state.connectionSecretRequests[serverId];
+    });
+  return state.connectionSecretRequests[serverId];
+}
+
 function updateCredentialToggle(visible) {
   const icon = $("toggleCredentialBtn").querySelector("i");
   icon.className = visible ? "ti ti-eye-off" : "ti ti-eye";
   $("toggleCredentialBtn").title = visible ? "隐藏凭据" : "显示凭据";
   $("revealBtn").innerHTML = visible ? '<i class="ti ti-eye-off"></i>隐藏凭据' : '<i class="ti ti-eye"></i>显示凭据';
+}
+
+function updatePanelPasswordToggle(visible) {
+  const icon = $("togglePanelPasswordBtn").querySelector("i");
+  icon.className = visible ? "ti ti-eye-off" : "ti ti-eye";
+  $("togglePanelPasswordBtn").title = visible ? "隐藏面板密码" : "显示面板密码";
 }
 
 async function showCredential(visible) {
@@ -323,6 +422,15 @@ async function showCredential(visible) {
   $("detailCredential").type = visible ? "text" : "password";
   updateCredentialToggle(visible);
   $("credentialStatus").textContent = visible ? "凭据正在明文显示。" : "凭据已加载，默认遮蔽显示。";
+}
+
+async function showPanelPassword(visible) {
+  const s = selected();
+  if (!s) return;
+  await loadConnectionSecret(s.id);
+  $("detailPanelPassword").type = visible ? "text" : "password";
+  updatePanelPasswordToggle(visible);
+  $("panelPasswordStatus").textContent = visible ? "面板密码正在明文显示。" : "面板密码已加载，默认遮蔽显示。";
 }
 
 function authLabel(value) {
@@ -355,16 +463,32 @@ function actionLabel(value) {
     check: "检查",
     inspect: "配置检查",
     reveal_credential: "查看凭据",
+    reveal_connection_secret: "查看连接密钥",
   }[value] || value;
 }
 
-function sshCommand(server) {
+function shellQuote(value, platform) {
+  const raw = String(value || "");
+  if (platform === "windows") return `"${raw.replace(/"/g, '\\"')}"`;
+  return `'${raw.replace(/'/g, "'\\''")}'`;
+}
+
+function sshCommand(server, platform) {
   const args = ["ssh"];
-  if (server.ssh_key_path) args.push("-i", server.ssh_key_path);
+  const keyPath = platform === "windows"
+    ? server.ssh_windows_key_path
+    : (server.ssh_local_key_path || server.ssh_key_path);
+  if (keyPath) args.push("-i", shellQuote(keyPath, platform));
   if (server.ssh_port && Number(server.ssh_port) !== 22) args.push("-p", String(server.ssh_port));
   if (server.ssh_options) args.push(server.ssh_options);
   args.push(`${server.login_user}@${server.ssh_host || server.ipv4 || server.hostname}`);
-  return args.join(" ");
+  const needsKey = server.auth_type === "key";
+  const hint = needsKey
+    ? keyPath
+      ? `请确认密钥文件在本机存在：${keyPath}`
+      : "这台服务器使用密钥登录，请先填写本机密钥路径。"
+    : "这台服务器使用密码登录。";
+  return { command: args.join(" "), hint };
 }
 
 function configReportHtml(report) {
@@ -493,6 +617,7 @@ $("serverForm").addEventListener("submit", async (event) => {
   const path = id ? `/api/servers/${id}` : "/api/servers";
   const saved = await api(path, { method, body: JSON.stringify(payloadFromForm()) });
   delete state.credentials[saved.id];
+  delete state.connectionSecrets[saved.id];
   state.selectedId = saved.id;
   $("serverDialog").close();
   await loadAll();
@@ -503,6 +628,7 @@ $("deleteBtn").addEventListener("click", async () => {
   if (!id || !confirm("确认删除这台服务器？")) return;
   await api(`/api/servers/${id}`, { method: "DELETE" });
   delete state.credentials[id];
+  delete state.connectionSecrets[id];
   state.selectedId = null;
   $("serverDialog").close();
   await loadAll();
@@ -522,8 +648,12 @@ $("inspectBtn").addEventListener("click", async () => {
   await loadAll();
 });
 
-$("copySshBtn").addEventListener("click", async () => {
-  await navigator.clipboard.writeText($("sshCommand").textContent);
+$("copySshUnixBtn").addEventListener("click", async () => {
+  await navigator.clipboard.writeText($("sshCommandUnix").textContent);
+});
+
+$("copySshWindowsBtn").addEventListener("click", async () => {
+  await navigator.clipboard.writeText($("sshCommandWindows").textContent);
 });
 
 $("revealBtn").addEventListener("click", async () => {
@@ -532,6 +662,23 @@ $("revealBtn").addEventListener("click", async () => {
 
 $("toggleCredentialBtn").addEventListener("click", async () => {
   await showCredential($("detailCredential").type === "password");
+});
+
+$("togglePanelPasswordBtn").addEventListener("click", async () => {
+  await showPanelPassword($("detailPanelPassword").type === "password");
+});
+
+$("copyPanelPasswordBtn").addEventListener("click", async () => {
+  const s = selected();
+  if (!s) return;
+  const data = await loadConnectionSecret(s.id);
+  const value = data.panel_password || "";
+  if (!value) {
+    $("panelPasswordStatus").textContent = "这台服务器没有保存面板密码。";
+    return;
+  }
+  await navigator.clipboard.writeText(value);
+  $("panelPasswordStatus").textContent = "面板密码已复制。";
 });
 
 $("copyCredentialBtn").addEventListener("click", async () => {

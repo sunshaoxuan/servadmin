@@ -45,7 +45,12 @@ class ServerPayload(BaseModel):
     ssh_host: Optional[str] = ""
     ssh_port: int = Field(default=22, ge=1, le=65535)
     ssh_key_path: Optional[str] = ""
+    ssh_local_key_path: Optional[str] = ""
+    ssh_windows_key_path: Optional[str] = ""
     ssh_options: Optional[str] = ""
+    panel_url: Optional[str] = ""
+    panel_username: Optional[str] = ""
+    panel_password: Optional[str] = ""
     service_code: Optional[str] = ""
     is_starred: bool = False
     tags: List[str] = Field(default_factory=list)
@@ -506,8 +511,9 @@ def create_server(payload: ServerPayload, user=Depends(current_user), conn=Depen
     cur = conn.execute(
         """
         insert into servers(name, hostname, ipv4, ipv6, provider, region, login_user, auth_type,
-          ssh_host, ssh_port, ssh_key_path, ssh_options, service_code, is_starred, tags_json, notes, credential_encrypted)
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ssh_host, ssh_port, ssh_key_path, ssh_local_key_path, ssh_windows_key_path, ssh_options, panel_url, panel_username,
+          panel_password_encrypted, service_code, is_starred, tags_json, notes, credential_encrypted)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             payload.name,
@@ -521,7 +527,12 @@ def create_server(payload: ServerPayload, user=Depends(current_user), conn=Depen
             payload.ssh_host or "",
             payload.ssh_port,
             payload.ssh_key_path or "",
+            payload.ssh_local_key_path or "",
+            payload.ssh_windows_key_path or "",
             payload.ssh_options or "",
+            payload.panel_url or "",
+            payload.panel_username or "",
+            c.encrypt(payload.panel_password),
             payload.service_code or "",
             1 if payload.is_starred else 0,
             json.dumps(payload.tags),
@@ -542,10 +553,12 @@ def update_server(server_id: int, payload: ServerPayload, user=Depends(current_u
     if not row:
         raise HTTPException(status_code=404, detail="server not found")
     credential = row["credential_encrypted"] if payload.credential == "" else c.encrypt(payload.credential)
+    panel_password = row["panel_password_encrypted"] if payload.panel_password == "" else c.encrypt(payload.panel_password)
     conn.execute(
         """
         update servers set name = ?, hostname = ?, ipv4 = ?, ipv6 = ?, provider = ?, region = ?,
-          login_user = ?, auth_type = ?, ssh_host = ?, ssh_port = ?, ssh_key_path = ?, ssh_options = ?,
+          login_user = ?, auth_type = ?, ssh_host = ?, ssh_port = ?, ssh_key_path = ?, ssh_local_key_path = ?,
+          ssh_windows_key_path = ?, ssh_options = ?, panel_url = ?, panel_username = ?, panel_password_encrypted = ?,
           service_code = ?, is_starred = ?, tags_json = ?, notes = ?,
           credential_encrypted = ?, updated_at = current_timestamp
         where id = ?
@@ -562,7 +575,12 @@ def update_server(server_id: int, payload: ServerPayload, user=Depends(current_u
             payload.ssh_host or "",
             payload.ssh_port,
             payload.ssh_key_path or "",
+            payload.ssh_local_key_path or "",
+            payload.ssh_windows_key_path or "",
             payload.ssh_options or "",
+            payload.panel_url or "",
+            payload.panel_username or "",
+            panel_password,
             payload.service_code or "",
             1 if payload.is_starred else 0,
             json.dumps(payload.tags),
@@ -642,6 +660,21 @@ def reveal_credential(server_id: int, user=Depends(current_user), conn=Depends(d
         raise HTTPException(status_code=404, detail="server not found")
     audit(conn, user["username"], "reveal_credential", "server", server_id)
     return {"credential": c.decrypt(row["credential_encrypted"])}
+
+
+@app.get("/api/servers/{server_id}/connection-secret")
+def reveal_connection_secret(server_id: int, user=Depends(current_user), conn=Depends(db), c=Depends(cipher)):
+    row = conn.execute(
+        "select credential_encrypted, panel_password_encrypted from servers where id = ?",
+        (server_id,),
+    ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="server not found")
+    audit(conn, user["username"], "reveal_connection_secret", "server", server_id)
+    return {
+        "credential": c.decrypt(row["credential_encrypted"]),
+        "panel_password": c.decrypt(row["panel_password_encrypted"]),
+    }
 
 
 @app.get("/api/audit")
