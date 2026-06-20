@@ -213,6 +213,7 @@ function renderAudit() {
 
 function renderAuditDrawer() {
   $("auditDrawer").classList.toggle("collapsed", state.auditCollapsed);
+  document.querySelector(".main-grid")?.classList.toggle("audit-collapsed", state.auditCollapsed);
   $("toggleAuditBtn").title = state.auditCollapsed ? "展开" : "收缩";
 }
 

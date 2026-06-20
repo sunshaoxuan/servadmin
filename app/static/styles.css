@@ -254,6 +254,9 @@ label {
   gap: 14px;
   grid-template-columns: minmax(0, 1fr) 310px;
 }
+.main-grid.audit-collapsed {
+  grid-template-columns: minmax(0, 1fr) 52px;
+}
 .content-column {
   display: grid;
   gap: 14px;
@@ -705,6 +708,7 @@ label {
 }
 .audit-drawer.collapsed {
   width: 52px;
+  justify-self: end;
 }
 .audit-drawer.collapsed .audit-head,
 .audit-drawer.collapsed .audit-content {
@@ -831,6 +835,9 @@ dialog::backdrop { background: rgba(10, 20, 18, 0.34); }
   }
   .audit-drawer.collapsed {
     width: auto;
+  }
+  .main-grid.audit-collapsed {
+    display: flex;
   }
 }
 @media (max-width: 640px) {
