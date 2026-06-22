@@ -634,10 +634,26 @@ function listServicesHtml(services) {
 function serviceItemsHtml(services) {
   if (!services.length) return `<li class="muted-item">未记录</li>`;
   return services.map((service) => {
+    const signal = serviceSignal(service);
     const exposure = service.external ? "外部可访问" : "内部监听";
     const ports = (service.ports || []).slice(0, 3).join(" / ");
-    return `<li><span>${escapeHtml(service.name)}</span><small>${escapeHtml(exposure)}${ports ? ` · ${escapeHtml(ports)}` : ""}</small></li>`;
+    return `<li class="service-inspection-item">
+      ${statusDot(signal.value, signal.label, "service")}
+      <span>${escapeHtml(service.name)}</span>
+      <small>${escapeHtml(exposure)}${ports ? ` · ${escapeHtml(ports)}` : ""}</small>
+    </li>`;
   }).join("");
+}
+
+function serviceSignal(service) {
+  const state = String(service.state || "").toLowerCase();
+  if (state && !["running", "listening"].includes(state)) {
+    return { value: "offline", label: "异常" };
+  }
+  if (service.external) {
+    return { value: "online", label: "外部可访问" };
+  }
+  return { value: "internal", label: "内部监听" };
 }
 
 function formatDateTime(value) {

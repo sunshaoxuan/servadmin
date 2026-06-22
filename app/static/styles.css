@@ -439,9 +439,18 @@ label {
   box-shadow: 0 0 0 3px rgba(217, 45, 32, 0.16);
 }
 .runtime-unknown,
-.config-warning {
+.config-warning,
+.service-internal {
   background: #d9822b;
   box-shadow: 0 0 0 3px rgba(217, 130, 43, 0.18);
+}
+.service-online {
+  background: #18a058;
+  box-shadow: 0 0 0 3px rgba(24, 160, 88, 0.16);
+}
+.service-offline {
+  background: #d92d20;
+  box-shadow: 0 0 0 3px rgba(217, 45, 32, 0.16);
 }
 .config-unknown {
   background: #8a99a5;
@@ -700,6 +709,15 @@ label {
   gap: 2px;
   padding: 7px 8px;
 }
+.inspection-list li.service-inspection-item {
+  align-items: start;
+  gap: 2px 8px;
+  grid-template-columns: 11px minmax(0, 1fr);
+}
+.service-inspection-item .status-dot {
+  grid-row: 1 / span 2;
+  margin-top: 5px;
+}
 .inspection-list li span,
 .inspection-list li small,
 .inspection-columns li span,
@@ -711,6 +729,9 @@ label {
 .inspection-columns li small {
   color: var(--muted);
   font-size: 11px;
+}
+.service-inspection-item small {
+  grid-column: 2;
 }
 .inspection-list .muted-item,
 .inspection-columns .muted-item {
