@@ -137,11 +137,13 @@ function showTab(tab) {
 
 function rowHtml(s) {
   const active = s.id === state.selectedId ? "active" : "";
+  const serverStatus = s.last_status || "unknown";
+  const configStatus = s.config_status || "unknown";
   const tags = (s.tags || []).slice(0, 3).map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join("");
   return `
     <tr class="ops-row ${active}" data-id="${s.id}">
       <td>
-        <span class="server-title">${s.is_starred ? '<span class="server-star" title="重点生产机">★</span>' : ""}${escapeHtml(s.name)}</span>
+        <span class="server-title">${statusDot(serverStatus, statusLabel(serverStatus))}${s.is_starred ? '<span class="server-star" title="重点生产机">★</span>' : ""}<span class="server-title-text">${escapeHtml(s.name)}</span></span>
         <span class="server-sub">${escapeHtml(s.provider || "未设置")}</span>
         <span class="tags">${tags}</span>
       </td>
@@ -153,9 +155,9 @@ function rowHtml(s) {
         <strong>${escapeHtml(s.login_user)}</strong>
         <span class="server-sub">${escapeHtml(authLabel(s.auth_type))}</span>
       </td>
-      <td data-label="状态"><span class="status ${escapeHtml(s.last_status)}">${escapeHtml(statusLabel(s.last_status))}</span></td>
+      <td data-label="状态">${statusPill(serverStatus, statusLabel(serverStatus))}</td>
       <td data-label="配置">
-        <span class="status config-${escapeHtml(s.config_status || "unknown")}">${escapeHtml(configLabel(s.config_status))}</span>
+        ${statusPill(configStatus, configLabel(configStatus), "config")}
         <span class="server-sub">${escapeHtml(s.config_summary || "未检查")}</span>
       </td>
       <td data-label="最近检查"><span class="server-sub">${escapeHtml(s.last_checked_at ? s.last_checked_at.slice(0, 16) : "未检查")}</span></td>
@@ -182,8 +184,8 @@ function renderDetail() {
   $("detailPanel").classList.remove("hidden");
   $("detailName").textContent = s.name;
   $("detailHost").textContent = s.hostname;
-  $("detailStatus").textContent = statusLabel(s.last_status);
-  $("detailStatus").className = `status ${s.last_status}`;
+  $("detailStatus").innerHTML = `${statusDot(s.last_status || "unknown", statusLabel(s.last_status))}${escapeHtml(statusLabel(s.last_status))}`;
+  $("detailStatus").className = `status ${s.last_status || "unknown"} detail-mini-status`;
   renderDetailTabs();
   $("detailIpv4").textContent = s.ipv4 || "未设置";
   $("detailIpv6").textContent = s.ipv6 || "未设置";
@@ -203,8 +205,8 @@ function renderDetail() {
   $("detailCreated").textContent = formatDateTime(s.created_at);
   $("detailUpdated").textContent = formatDateTime(s.updated_at);
   $("detailCheckedAt").textContent = formatDateTime(s.last_checked_at);
-  $("detailConfigStatus").innerHTML = `<span class="status config-${escapeHtml(s.config_status || "unknown")}">${escapeHtml(configLabel(s.config_status))}</span> ${escapeHtml(s.config_summary || "未检查")}`;
-  $("detailConfigStatusPanel").innerHTML = `<span class="status config-${escapeHtml(s.config_status || "unknown")}">${escapeHtml(configLabel(s.config_status))}</span> ${escapeHtml(s.config_summary || "未检查")}`;
+  $("detailConfigStatus").innerHTML = `${statusPill(s.config_status || "unknown", configLabel(s.config_status), "config")} ${escapeHtml(s.config_summary || "未检查")}`;
+  $("detailConfigStatusPanel").innerHTML = `${statusPill(s.config_status || "unknown", configLabel(s.config_status), "config")} ${escapeHtml(s.config_summary || "未检查")}`;
   $("detailConfigReport").innerHTML = configReportHtml(s.config_report || {});
   $("inspectionSummary").textContent = s.last_config_check_at ? `检查时间 ${formatDateTime(s.last_config_check_at)}` : "未检查";
   $("installedAppsCount").textContent = `${(s.installed_apps || []).length} 项`;
@@ -273,11 +275,12 @@ function serviceCardHtml(item) {
     : escapeHtml(item.target || "未设置");
   return `
     <article class="service-item">
-      <div>
+      <div class="service-name">
+        ${statusDot(status, status)}
         <strong>${escapeHtml(item.name)}</strong>
         <small>${target}</small>
       </div>
-      <span class="status ${escapeHtml(status)}">${escapeHtml(status)}</span>
+      ${statusPill(status, status)}
       <div class="service-detail">
         <span>${escapeHtml(item.detail || "无详情")}</span>
         <span>${Number.isFinite(item.latency_ms) ? `${item.latency_ms} ms` : "未计时"}</span>
@@ -518,6 +521,17 @@ function statusLabel(value) {
     offline: "离线",
     unknown: "未检查",
   }[value || "unknown"] || value;
+}
+
+function statusDot(value, label, scope = "runtime") {
+  const normalized = value || "unknown";
+  return `<span class="status-dot ${escapeHtml(scope)}-${escapeHtml(normalized)}" title="${escapeHtml(label || normalized)}" aria-label="${escapeHtml(label || normalized)}"></span>`;
+}
+
+function statusPill(value, label, scope = "runtime") {
+  const normalized = value || "unknown";
+  const className = scope === "config" ? `config-${normalized}` : normalized;
+  return `<span class="status ${escapeHtml(className)}">${statusDot(normalized, label, scope)}${escapeHtml(label || normalized)}</span>`;
 }
 
 function configLabel(value) {

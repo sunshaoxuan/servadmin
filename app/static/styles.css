@@ -264,6 +264,9 @@ label {
 .metric-icon i {
   font-size: 26px;
 }
+.metric-card .metric-icon {
+  box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.08);
+}
 .metric-total { background: var(--accent); }
 .metric-online { background: var(--green); }
 .metric-pending { background: var(--orange); }
@@ -346,13 +349,20 @@ label {
   background: #f6fbfa;
 }
 .server-title {
+  align-items: center;
   color: var(--text);
-  display: block;
+  display: flex;
+  gap: 7px;
   font-weight: 800;
   max-width: 340px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.server-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .server-star {
   color: #f59e0b;
@@ -405,9 +415,36 @@ label {
   display: inline-flex;
   font-size: 12px;
   font-weight: 800;
+  gap: 6px;
   justify-content: center;
   min-width: 74px;
   padding: 5px 10px;
+}
+.status-dot {
+  border-radius: 999px;
+  box-shadow: 0 0 0 3px rgba(89, 104, 115, 0.12);
+  display: inline-flex;
+  flex: 0 0 9px;
+  height: 9px;
+  width: 9px;
+}
+.runtime-online,
+.config-ok {
+  background: #18a058;
+  box-shadow: 0 0 0 3px rgba(24, 160, 88, 0.16);
+}
+.runtime-offline,
+.config-error {
+  background: #d92d20;
+  box-shadow: 0 0 0 3px rgba(217, 45, 32, 0.16);
+}
+.runtime-unknown,
+.config-warning {
+  background: #d9822b;
+  box-shadow: 0 0 0 3px rgba(217, 130, 43, 0.18);
+}
+.config-unknown {
+  background: #8a99a5;
 }
 .status.online { background: #dff7ed; color: #0f6b47; }
 .status.offline { background: #ffe8e6; color: var(--danger); }
@@ -876,6 +913,15 @@ label {
   gap: 10px;
   grid-template-columns: 1fr auto;
   padding: 12px;
+}
+.service-name {
+  display: grid;
+  gap: 4px 8px;
+  grid-template-columns: 12px minmax(0, 1fr);
+}
+.service-name .status-dot {
+  grid-row: 1 / span 2;
+  margin-top: 4px;
 }
 .service-item strong,
 .service-item small {
