@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import platform
 import re
 import shlex
 import socket
@@ -26,6 +28,16 @@ DB_PATH = Path(os.environ.get("OPS_DB_PATH", BASE_DIR.parent / "data" / "ops.sql
 APP_SECRET = os.environ.get("OPS_APP_SECRET", "dev-only-change-me")
 CREDENTIAL_KEY = os.environ.get("OPS_CREDENTIAL_KEY", CredentialCipher.generate_key())
 SESSION_COOKIE = "ops_session"
+SYSTEMD_CHECKS = [
+    {"id": "server-desk", "name": "Server Desk", "unit": "server-desk.service", "category": "system"},
+    {"id": "nginx", "name": "Nginx", "unit": "nginx.service", "category": "system"},
+    {"id": "frps", "name": "FRP Server", "unit": "frps.service", "category": "network"},
+    {"id": "xray", "name": "Xray", "unit": "xray.service", "category": "network"},
+]
+NGINX_PROXY_CONFIGS = [
+    Path("/etc/nginx/conf.d/frp_services.conf"),
+    Path("/etc/nginx/conf.d/xray.conf"),
+]
 
 
 class LoginRequest(BaseModel):
@@ -72,6 +84,131 @@ def cipher() -> CredentialCipher:
 
 def session_codec() -> SessionCodec:
     return SessionCodec(APP_SECRET)
+
+
+def _status_from_bool(ok: bool) -> str:
+    return "online" if ok else "offline"
+
+
+def _parse_systemctl_show(output: str) -> dict[str, str]:
+    data: dict[str, str] = {}
+    for line in output.splitlines():
+        if "=" in line:
+            key, value = line.split("=", 1)
+            data[key] = value
+    return data
+
+
+def _check_systemd_service(item: dict[str, str]) -> dict[str, Any]:
+    started = time.perf_counter()
+    base = {
+        "id": item["id"],
+        "name": item["name"],
+        "category": item["category"],
+        "kind": "systemd",
+        "target": item["unit"],
+        "can_check": True,
+    }
+    try:
+        result = subprocess.run(
+            [
+                "systemctl",
+                "show",
+                item["unit"],
+                "--property=Id,LoadState,ActiveState,SubState,UnitFileState,Description",
+                "--no-pager",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=1.5,
+            check=False,
+        )
+    except FileNotFoundError:
+        return {**base, "status": "unknown", "detail": "systemctl unavailable", "latency_ms": 0}
+    except subprocess.TimeoutExpired:
+        return {**base, "status": "unknown", "detail": "systemctl timeout", "latency_ms": 1500}
+    latency = int((time.perf_counter() - started) * 1000)
+    if result.returncode != 0:
+        return {**base, "status": "unknown", "detail": (result.stderr or result.stdout).strip()[:180], "latency_ms": latency}
+    data = _parse_systemctl_show(result.stdout)
+    active = data.get("ActiveState", "unknown")
+    sub = data.get("SubState", "unknown")
+    load_state = data.get("LoadState", "unknown")
+    unit_file_state = data.get("UnitFileState", "unknown")
+    status = "online" if active == "active" else "offline" if load_state == "loaded" else "unknown"
+    return {
+        **base,
+        "status": status,
+        "detail": f"{active} / {sub}",
+        "latency_ms": latency,
+        "unit_file_state": unit_file_state,
+        "description": data.get("Description", item["name"]),
+    }
+
+
+def _check_tcp_target(host: str, port: int) -> dict[str, Any]:
+    started = time.perf_counter()
+    try:
+        with socket.create_connection((host, port), timeout=1.2):
+            pass
+        ok = True
+        detail = "tcp reachable"
+    except OSError as exc:
+        ok = False
+        detail = str(exc)
+    return {
+        "status": _status_from_bool(ok),
+        "detail": detail[:180],
+        "latency_ms": int((time.perf_counter() - started) * 1000),
+    }
+
+
+def _slug(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-") or "service"
+
+
+def _discover_nginx_proxy_apps() -> list[dict[str, Any]]:
+    apps: dict[str, dict[str, Any]] = {}
+    for config_path in NGINX_PROXY_CONFIGS:
+        if not config_path.exists():
+            continue
+        label = ""
+        server_names: list[str] = []
+        for raw_line in config_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            line = raw_line.strip()
+            comment = re.match(r"#\s*---\s*\d+\.\s*(.*?)\s*---", line)
+            if comment:
+                label = comment.group(1).strip()
+                server_names = []
+                continue
+            name_match = re.match(r"server_name\s+(.+?);", line)
+            if name_match:
+                server_names = [name for name in name_match.group(1).split() if name and "*" not in name]
+                continue
+            proxy_match = re.match(r"proxy_pass\s+https?://([^:/;]+):(\d+)", line)
+            if not proxy_match or not server_names:
+                continue
+            host, port_raw = proxy_match.groups()
+            port = int(port_raw)
+            domain = server_names[0]
+            key = f"{domain}:{host}:{port}"
+            apps[key] = {
+                "id": _slug(domain),
+                "name": label or domain,
+                "category": "application",
+                "kind": "tcp",
+                "target": f"{host}:{port}",
+                "public_url": f"https://{domain}",
+                "can_check": True,
+                "source": str(config_path),
+            }
+    return list(apps.values())
+
+
+def _check_proxy_app(item: dict[str, Any]) -> dict[str, Any]:
+    host, port_raw = item["target"].rsplit(":", 1)
+    result = _check_tcp_target(host, int(port_raw))
+    return {**item, **result}
 
 
 def current_user(request: Request, conn=Depends(db)) -> dict[str, Any]:
@@ -375,6 +512,19 @@ def build_config_report(output: str) -> tuple[str, str, dict[str, Any], list[dic
     return status, summary, report, apps, services
 
 
+def fallback_local_config_report() -> tuple[str, str, dict[str, Any], list[dict[str, str]], list[dict[str, Any]]]:
+    report = {
+        "hostname": socket.gethostname(),
+        "hostname_fqdn": socket.getfqdn(),
+        "os": [platform.platform()],
+        "kernel": platform.platform(),
+        "cpu_count": str(os.cpu_count() or ""),
+        "memory": "",
+        "disk_root": "",
+    }
+    return "warning", "0 个应用，0 个服务", report, [], []
+
+
 def run_paramiko_inspection(row, password: str) -> tuple[str, str, dict[str, Any], list[dict[str, str]], list[dict[str, Any]]]:
     if not password:
         return "error", "密码认证需要先保存登录凭据。", {"error": "密码认证需要先保存登录凭据。"}, [], []
@@ -413,7 +563,13 @@ def run_server_inspection(row, password: str = "") -> tuple[str, str, dict[str, 
     if not is_local and row["auth_type"] == "password":
         return run_paramiko_inspection(row, password)
     command = local_inspection_command(INSPECTION_SCRIPT) if is_local else ssh_command(row, INSPECTION_SCRIPT)
-    completed = subprocess.run(command, capture_output=True, text=True, timeout=20)
+    try:
+        completed = subprocess.run(command, capture_output=True, text=True, timeout=20)
+    except FileNotFoundError as exc:
+        if is_local:
+            return fallback_local_config_report()
+        detail = str(exc)[:500]
+        return "error", detail, {"error": detail}, [], []
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout or "inspection failed").strip()[:500]
         return "error", detail, {"error": detail}, [], []
@@ -466,6 +622,22 @@ def index():
 def health(conn=Depends(db)):
     conn.execute("select 1").fetchone()
     return {"ok": True, "version": app.version}
+
+
+@app.get("/api/services/status")
+async def services_status(user=Depends(current_user)):
+    system_tasks = [asyncio.to_thread(_check_systemd_service, item) for item in SYSTEMD_CHECKS]
+    proxy_items = await asyncio.to_thread(_discover_nginx_proxy_apps)
+    proxy_tasks = [asyncio.to_thread(_check_proxy_app, item) for item in proxy_items]
+    systems, applications = await asyncio.gather(
+        asyncio.gather(*system_tasks),
+        asyncio.gather(*proxy_tasks) if proxy_tasks else asyncio.sleep(0, result=[]),
+    )
+    return {
+        "checked_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "services": sorted(systems, key=lambda item: (item["category"], item["name"])),
+        "applications": sorted(applications, key=lambda item: item["name"]),
+    }
 
 
 @app.get("/api/me")

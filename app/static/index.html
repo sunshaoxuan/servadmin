@@ -7,7 +7,7 @@
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230f766e'/%3E%3Ctext x='32' y='39' font-size='22' text-anchor='middle' font-family='Arial' font-weight='700' fill='white'%3ESD%3C/text%3E%3C/svg%3E" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0-beta20/dist/css/tabler.min.css" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.28.1/dist/tabler-icons.min.css" />
-    <link rel="stylesheet" href="static/styles.css?v=20260620-auditcollapse1" />
+    <link rel="stylesheet" href="static/styles.css?v=20260622-services1" />
   </head>
   <body>
     <main id="loginView" class="login-screen">
@@ -34,9 +34,9 @@
           </div>
         </div>
         <nav class="nav-list">
-          <button class="nav-item active"><i class="ti ti-server-2"></i><span>服务器</span></button>
-          <button class="nav-item"><i class="ti ti-activity"></i><span>审计</span></button>
-          <button class="nav-item"><i class="ti ti-settings"></i><span>设置</span></button>
+          <button class="nav-item active" data-tab="servers"><i class="ti ti-server-2"></i><span>服务器</span></button>
+          <button class="nav-item" data-tab="audit"><i class="ti ti-activity"></i><span>审计</span></button>
+          <button class="nav-item" data-tab="settings"><i class="ti ti-settings"></i><span>设置</span></button>
         </nav>
         <div class="sidebar-foot">
           <span id="whoami"></span>
@@ -47,7 +47,7 @@
       <section class="ops-workspace">
         <header class="page-bar">
           <div>
-            <h1>服务器管理</h1>
+            <h1 id="pageTitle">服务器管理</h1>
             <p id="summaryText">载入中</p>
           </div>
           <div class="toolbar">
@@ -60,6 +60,13 @@
           </div>
         </header>
 
+        <nav class="mobile-tabs">
+          <button class="mobile-tab active" data-tab="servers"><i class="ti ti-server-2"></i><span>服务器</span></button>
+          <button class="mobile-tab" data-tab="audit"><i class="ti ti-activity"></i><span>审计</span></button>
+          <button class="mobile-tab" data-tab="settings"><i class="ti ti-settings"></i><span>设置</span></button>
+        </nav>
+
+        <section id="serversView" class="tab-panel">
         <section class="overview-strip">
           <div class="metric-card">
             <span class="metric-icon metric-total"><i class="ti ti-server-2"></i></span>
@@ -283,6 +290,22 @@
             <button id="expandAuditBtn" class="audit-expand btn btn-light btn-icon" type="button" title="展开"><i class="ti ti-history"></i></button>
           </aside>
         </section>
+        </section>
+
+        <section id="settingsView" class="tab-panel hidden">
+          <section class="services-panel card">
+            <div class="section-head">
+              <div>
+                <h2>应用和服务状态</h2>
+                <p id="servicesSummary">切换到此页签时会自动刷新。</p>
+              </div>
+              <button id="refreshServicesBtn" class="btn btn-primary"><i class="ti ti-refresh"></i>刷新状态</button>
+            </div>
+            <div id="serviceStatusGrid" class="service-status-grid">
+              <div class="service-loading">等待刷新</div>
+            </div>
+          </section>
+        </section>
       </section>
     </main>
 
@@ -326,6 +349,6 @@
       </form>
     </dialog>
 
-    <script src="static/app.js?v=20260620-auditcollapse1"></script>
+    <script src="static/app.js?v=20260622-services1"></script>
   </body>
 </html>

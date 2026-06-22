@@ -176,6 +176,26 @@ label {
   display: flex;
   gap: 10px;
 }
+.mobile-tabs {
+  display: none;
+}
+.mobile-tab {
+  align-items: center;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: #314742;
+  display: inline-flex;
+  font-weight: 750;
+  gap: 6px;
+  justify-content: center;
+  padding: 9px 10px;
+}
+.mobile-tab.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
 .search-wrap {
   align-items: center;
   background: #fff;
@@ -256,6 +276,10 @@ label {
 }
 .main-grid.audit-collapsed {
   grid-template-columns: minmax(0, 1fr) 52px;
+}
+.tab-panel {
+  display: grid;
+  gap: 14px;
 }
 .content-column {
   display: grid;
@@ -814,6 +838,71 @@ label {
   background: #fff1f0;
   color: var(--danger);
 }
+.services-panel {
+  overflow: hidden;
+}
+.service-status-grid {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+.service-group {
+  display: grid;
+  gap: 10px;
+}
+.service-group-title {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+.service-group-title h3 {
+  font-size: 15px;
+  margin: 0;
+}
+.service-group-title span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.service-list {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+.service-item {
+  background: #fbfdfc;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1fr auto;
+  padding: 12px;
+}
+.service-item strong,
+.service-item small {
+  display: block;
+  min-width: 0;
+}
+.service-item small,
+.service-item a {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+}
+.service-detail {
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  display: flex;
+  font-size: 12px;
+  gap: 10px;
+  grid-column: 1 / -1;
+  justify-content: space-between;
+  padding-top: 8px;
+}
+.service-loading {
+  color: var(--muted);
+  padding: 18px;
+}
 dialog {
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -848,6 +937,11 @@ dialog::backdrop { background: rgba(10, 20, 18, 0.34); }
   .ops-workspace { padding: 18px; }
   .page-bar { align-items: stretch; display: grid; }
   .toolbar { flex-wrap: wrap; }
+  .mobile-tabs {
+    display: grid;
+    gap: 8px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
   .search-wrap { width: 100%; }
   .overview-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .main-grid {
@@ -890,6 +984,15 @@ dialog::backdrop { background: rgba(10, 20, 18, 0.34); }
   }
   .inspection-columns {
     grid-template-columns: 1fr;
+  }
+  .service-status-grid {
+    padding: 12px;
+  }
+  .service-list {
+    grid-template-columns: 1fr;
+  }
+  .service-detail {
+    display: grid;
   }
   .ops-table thead {
     display: none;

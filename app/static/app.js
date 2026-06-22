@@ -8,6 +8,8 @@ const state = {
   connectionSecrets: {},
   credentialRequests: {},
   connectionSecretRequests: {},
+  activeTab: "servers",
+  services: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -109,6 +111,28 @@ function render() {
   renderDetail();
   renderAudit();
   renderAuditDrawer();
+}
+
+function showTab(tab) {
+  state.activeTab = tab;
+  document.querySelectorAll(".nav-item[data-tab], .mobile-tab[data-tab]").forEach((item) => {
+    item.classList.toggle("active", item.dataset.tab === tab);
+  });
+  const settings = tab === "settings";
+  $("serversView").classList.toggle("hidden", settings);
+  $("settingsView").classList.toggle("hidden", !settings);
+  document.querySelector(".search-wrap").classList.toggle("hidden", settings);
+  $("addBtn").classList.toggle("hidden", settings);
+  $("pageTitle").textContent = settings ? "设置" : "服务器管理";
+  if (settings) {
+    $("summaryText").textContent = "应用和服务状态";
+    refreshServices();
+    return;
+  }
+  render();
+  if (tab === "audit") {
+    setTimeout(() => document.querySelector(".audit-panel")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+  }
 }
 
 function rowHtml(s) {
@@ -221,6 +245,57 @@ function renderAuditDrawer() {
   $("auditDrawer").classList.toggle("collapsed", state.auditCollapsed);
   document.querySelector(".main-grid")?.classList.toggle("audit-collapsed", state.auditCollapsed);
   $("toggleAuditBtn").title = state.auditCollapsed ? "展开" : "收缩";
+}
+
+function renderServices(data) {
+  const groups = [
+    ["系统服务", data.services || []],
+    ["应用代理", data.applications || []],
+  ];
+  $("servicesSummary").textContent = `最近刷新：${escapeHtml(data.checked_at || "未知")}`;
+  $("serviceStatusGrid").innerHTML = groups.map(([title, items]) => `
+    <section class="service-group">
+      <div class="service-group-title">
+        <h3>${escapeHtml(title)}</h3>
+        <span>${items.length} 项</span>
+      </div>
+      <div class="service-list">
+        ${items.length ? items.map(serviceCardHtml).join("") : '<div class="service-loading">未发现可检测项目</div>'}
+      </div>
+    </section>
+  `).join("");
+}
+
+function serviceCardHtml(item) {
+  const status = item.status || "unknown";
+  const target = item.public_url
+    ? `<a href="${escapeHtml(item.public_url)}" target="_blank" rel="noreferrer">${escapeHtml(item.public_url)}</a>`
+    : escapeHtml(item.target || "未设置");
+  return `
+    <article class="service-item">
+      <div>
+        <strong>${escapeHtml(item.name)}</strong>
+        <small>${target}</small>
+      </div>
+      <span class="status ${escapeHtml(status)}">${escapeHtml(status)}</span>
+      <div class="service-detail">
+        <span>${escapeHtml(item.detail || "无详情")}</span>
+        <span>${Number.isFinite(item.latency_ms) ? `${item.latency_ms} ms` : "未计时"}</span>
+      </div>
+    </article>
+  `;
+}
+
+async function refreshServices() {
+  $("servicesSummary").textContent = "正在刷新状态";
+  $("serviceStatusGrid").innerHTML = '<div class="service-loading">正在检测 systemd 服务和本机代理端口...</div>';
+  try {
+    state.services = await api("/api/services/status");
+    renderServices(state.services);
+  } catch (error) {
+    $("servicesSummary").textContent = "状态刷新失败";
+    $("serviceStatusGrid").innerHTML = `<div class="service-loading error">${escapeHtml(error.message)}</div>`;
+  }
 }
 
 function openForm(server = null) {
@@ -584,7 +659,13 @@ $("logoutBtn").addEventListener("click", async () => {
   await api("/api/logout", { method: "POST" }).catch(() => {});
   showLogin();
 });
-$("refreshBtn").addEventListener("click", loadAll);
+$("refreshBtn").addEventListener("click", () => {
+  if (state.activeTab === "settings") {
+    refreshServices();
+  } else {
+    loadAll();
+  }
+});
 $("addBtn").addEventListener("click", () => openForm());
 $("editBtn").addEventListener("click", () => openForm(selected()));
 $("searchBox").addEventListener("input", render);
@@ -593,6 +674,10 @@ $("detailTabs").addEventListener("click", (event) => {
   if (!button) return;
   state.activeDetailTab = button.dataset.detailTab;
   renderDetailTabs();
+});
+$("refreshServicesBtn").addEventListener("click", refreshServices);
+document.querySelectorAll(".nav-item[data-tab], .mobile-tab[data-tab]").forEach((item) => {
+  item.addEventListener("click", () => showTab(item.dataset.tab || "servers"));
 });
 $("detailPanel").addEventListener("click", (event) => {
   if (!event.target.closest(".detail-close")) return;

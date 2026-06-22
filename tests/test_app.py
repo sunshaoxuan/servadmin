@@ -193,8 +193,9 @@ def test_static_and_index_are_not_cached():
         response = client.get("/")
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
-        assert "static/styles.css?v=20260620-auditcollapse1" in response.text
+        assert "static/styles.css?v=20260622-services1" in response.text
         assert 'id="detailCredential"' in response.text
+        assert 'id="settingsView"' in response.text
 
         response = client.get("/static/styles.css")
         assert response.status_code == 200
@@ -249,5 +250,26 @@ def test_inspect_localhost_records_config_and_services():
         response = client.get("/api/audit")
         assert response.status_code == 200
         assert "inspect" in [row["action"] for row in response.json()]
+    finally:
+        os.unlink(db_path)
+
+
+def test_services_status_requires_login_and_returns_shape():
+    client, db_path = make_client()
+    try:
+        response = client.get("/api/services/status")
+        assert response.status_code == 401
+
+        response = client.post("/api/login", json={"username": "admin", "password": "admin-pass"})
+        assert response.status_code == 200
+
+        response = client.get("/api/services/status")
+        assert response.status_code == 200
+        body = response.json()
+        assert "checked_at" in body
+        assert "services" in body
+        assert "applications" in body
+        service_ids = {item["id"] for item in body["services"]}
+        assert {"server-desk", "nginx", "frps", "xray"}.issubset(service_ids)
     finally:
         os.unlink(db_path)
