@@ -34,8 +34,8 @@ No public gateway cutover was performed. No write fence was enabled. No producti
   - `flarum`
   - `snail-job`
   - `openresty`
-- Temporarily started `hospital_stack_hospital-backend` for target health validation, then removed the Swarm service to match the intended pre-cutover operating posture.
-- Kept `hospital-backend:20260625` and `/opt/1panel/docker/compose/hospital-stack/docker-compose.yml` on OrangeVPS as the hot-update tag control entry.
+- Restored `hospital_stack_hospital-backend` as the actual Swarm service on OrangeVPS.
+- Kept the 1Panel compose container for `hospital-stack` stopped; that compose entry is only the tag-edit and hot-update control entry.
 - Updated OrangeVPS `hospital-stack` compose overrides so future hot-update runs use the OrangeVPS target:
   - `SPRING_DATASOURCE_URL=jdbc:postgresql://178.239.117.99:35432/hospital`
   - `SNAIL_JOB_SERVER_HOST=178.239.117.99`
@@ -49,9 +49,10 @@ No public gateway cutover was performed. No write fence was enabled. No producti
 
 ## Validation
 
-- Backend service on OrangeVPS reported healthy during the temporary validation run.
-- Local backend check returned page title `英雄荣光医院:立刻开玩` during the temporary validation run.
-- After validation, `hospital_stack_hospital-backend` was stopped on OrangeVPS. The image and compose file remain available for the scheduled cutover and hot-update workflow.
+- Backend Swarm service on OrangeVPS reported `1/1` and healthy.
+- Local backend check returned page title `英雄荣光医院:立刻开玩`.
+- The 1Panel compose container list for `hospital-stack` remained empty, matching the production-style hot-update control posture.
+- Local TCP check from the operator workstation to `178.239.117.99:8190` succeeded.
 - Local Flarum check returned page title `英雄荣光医院论坛`.
 - PostgreSQL target databases: `hospital`, `postgres`, `snailjob`, and the default root-user database.
 - MySQL target `flarum_rtt3ns` database had 33 tables.
