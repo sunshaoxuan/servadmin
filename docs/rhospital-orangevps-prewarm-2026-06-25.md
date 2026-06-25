@@ -39,6 +39,8 @@ No public gateway cutover was performed. No write fence was enabled. No producti
 - Installed 1Panel `v2.1.13` on OrangeVPS after backing up the prewarm `/opt/1panel` directory.
 - Restored the prewarmed 1Panel app, compose, and website directories after installing 1Panel.
 - Stored OrangeVPS 1Panel login URL, username, and encrypted panel password in Server Desk server id `7`.
+- Restored 1Panel `agent.db` application metadata from `CLAW-JP-PROD` to OrangeVPS, while keeping OrangeVPS `core.db` and panel login unchanged.
+- Confirmed the following apps now appear as 1Panel installed apps on OrangeVPS: `openresty`, `postgresql`, `mysql`, and `flarum`.
 
 ## Validation
 
@@ -51,6 +53,11 @@ No public gateway cutover was performed. No write fence was enabled. No producti
 - Server Desk inspection for OrangeVPS was refreshed and reported `80 个应用，29 个服务`.
 - OrangeVPS disk after prewarm: about `9.2G` used, `68G` available on `/`.
 - OrangeVPS 1Panel responded with `HTTP 200` at `http://178.239.117.99:38428/rhospital`.
+- OrangeVPS 1Panel application metadata integrity check passed, and `app_installs` contains 4 production-matched apps:
+  - `openresty` version `1.29.2.4-0-noble`
+  - `postgresql` version `18.4-alpine`
+  - `mysql` version `8.4.9`
+  - `flarum` version `1.8.10`
 
 ## Cutover Status
 
