@@ -34,15 +34,17 @@ No public gateway cutover was performed. No write fence was enabled. No producti
   - `flarum`
   - `snail-job`
   - `openresty`
-  - `hospital_stack_hospital-backend`
+- Temporarily started `hospital_stack_hospital-backend` for target health validation, then removed the Swarm service to match the intended pre-cutover operating posture.
+- Kept `hospital-backend:20260625` and `/opt/1panel/docker/compose/hospital-stack/docker-compose.yml` on OrangeVPS as the hot-update tag control entry.
 - Installed 1Panel `v2.1.13` on OrangeVPS after backing up the prewarm `/opt/1panel` directory.
 - Restored the prewarmed 1Panel app, compose, and website directories after installing 1Panel.
 - Stored OrangeVPS 1Panel login URL, username, and encrypted panel password in Server Desk server id `7`.
 
 ## Validation
 
-- Backend service on OrangeVPS reported healthy in Docker Swarm.
-- Local backend check returned page title `英雄荣光医院:立刻开玩`.
+- Backend service on OrangeVPS reported healthy during the temporary validation run.
+- Local backend check returned page title `英雄荣光医院:立刻开玩` during the temporary validation run.
+- After validation, `hospital_stack_hospital-backend` was stopped on OrangeVPS. The image and compose file remain available for the scheduled cutover and hot-update workflow.
 - Local Flarum check returned page title `英雄荣光医院论坛`.
 - PostgreSQL target databases: `hospital`, `postgres`, `snailjob`, and the default root-user database.
 - MySQL target `flarum_rtt3ns` database had 33 tables.
