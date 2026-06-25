@@ -35,6 +35,9 @@ No public gateway cutover was performed. No write fence was enabled. No producti
   - `snail-job`
   - `openresty`
   - `hospital_stack_hospital-backend`
+- Installed 1Panel `v2.1.13` on OrangeVPS after backing up the prewarm `/opt/1panel` directory.
+- Restored the prewarmed 1Panel app, compose, and website directories after installing 1Panel.
+- Stored OrangeVPS 1Panel login URL, username, and encrypted panel password in Server Desk server id `7`.
 
 ## Validation
 
@@ -45,6 +48,7 @@ No public gateway cutover was performed. No write fence was enabled. No producti
 - MySQL target `flarum_rtt3ns` database had 33 tables.
 - Server Desk inspection for OrangeVPS was refreshed and reported `80 个应用，29 个服务`.
 - OrangeVPS disk after prewarm: about `9.2G` used, `68G` available on `/`.
+- OrangeVPS 1Panel responded with `HTTP 200` at `http://178.239.117.99:38428/rhospital`.
 
 ## Cutover Status
 
