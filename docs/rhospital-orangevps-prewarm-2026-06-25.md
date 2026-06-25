@@ -46,6 +46,7 @@ No public gateway cutover was performed. No write fence was enabled. No producti
 - Stored OrangeVPS 1Panel login URL, username, and encrypted panel password in Server Desk server id `7`.
 - Restored 1Panel `agent.db` application metadata from `CLAW-JP-PROD` to OrangeVPS, while keeping OrangeVPS `core.db` and panel login unchanged.
 - Confirmed the following apps now appear as 1Panel installed apps on OrangeVPS: `openresty`, `postgresql`, `mysql`, and `flarum`.
+- Added the operator PEM public key to `RHospital.OrangeVPS` root `authorized_keys` for IDE-driven SSH image upload.
 
 ## Validation
 
@@ -67,6 +68,7 @@ No public gateway cutover was performed. No write fence was enabled. No producti
 - OrangeVPS active app and compose configuration had no remaining `47.79.38.216` or `160.16.91.200` references outside backup files and logs.
 - Flarum effective runtime config uses `DB_HOST=mysql`, `DB_PORT=3306`, and `DB_NAME=flarum_rtt3ns`.
 - `docker compose config` confirmed the future hospital backend stack would use the OrangeVPS PostgreSQL and snail-job endpoints.
+- Local key-based SSH check to `root@178.239.117.99` using the operator PEM returned `key-login-ok` and host `RHospital.OrangeVPS`.
 
 ## Cutover Status
 
