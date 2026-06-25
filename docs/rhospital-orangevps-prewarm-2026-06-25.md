@@ -36,6 +36,11 @@ No public gateway cutover was performed. No write fence was enabled. No producti
   - `openresty`
 - Temporarily started `hospital_stack_hospital-backend` for target health validation, then removed the Swarm service to match the intended pre-cutover operating posture.
 - Kept `hospital-backend:20260625` and `/opt/1panel/docker/compose/hospital-stack/docker-compose.yml` on OrangeVPS as the hot-update tag control entry.
+- Updated OrangeVPS `hospital-stack` compose overrides so future hot-update runs use the OrangeVPS target:
+  - `SPRING_DATASOURCE_URL=jdbc:postgresql://178.239.117.99:35432/hospital`
+  - `SNAIL_JOB_SERVER_HOST=178.239.117.99`
+  - `SNAIL_JOB_HOST=178.239.117.99`
+- Updated OrangeVPS `snailjob` compose and recreated the target-only `snail-job` container so it uses `jdbc:postgresql://178.239.117.99:35432/snailjob`.
 - Installed 1Panel `v2.1.13` on OrangeVPS after backing up the prewarm `/opt/1panel` directory.
 - Restored the prewarmed 1Panel app, compose, and website directories after installing 1Panel.
 - Stored OrangeVPS 1Panel login URL, username, and encrypted panel password in Server Desk server id `7`.
@@ -58,6 +63,9 @@ No public gateway cutover was performed. No write fence was enabled. No producti
   - `postgresql` version `18.4-alpine`
   - `mysql` version `8.4.9`
   - `flarum` version `1.8.10`
+- OrangeVPS active app and compose configuration had no remaining `47.79.38.216` or `160.16.91.200` references outside backup files and logs.
+- Flarum effective runtime config uses `DB_HOST=mysql`, `DB_PORT=3306`, and `DB_NAME=flarum_rtt3ns`.
+- `docker compose config` confirmed the future hospital backend stack would use the OrangeVPS PostgreSQL and snail-job endpoints.
 
 ## Cutover Status
 
