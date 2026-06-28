@@ -96,6 +96,67 @@ Backend tests should point to:
 
 The official cutover candidate remains the read-only replica on `35432` and `33306`.
 
+## Application Test Runtime 2026-06-28
+
+A temporary application test runtime was started on `RHospital.OrangeVPS` to prove that the new production host can run the old production style services before public cutover.
+
+No public gateway change was performed. `RHOSPITAL-GATE` still points public traffic at `CLAW-JP-PROD`.
+
+Runtime layout:
+
+| Component | Runtime | Public test port | Database target |
+|---|---|---:|---|
+| Game backend | Swarm service `hospital_stack_hospital-backend` | `8190`, `9996`, `17889` | PostgreSQL test baseline `178.239.117.99:45432/hospital` |
+| snail-job | Container `snail-job-test` | `38084`, `17888` | PostgreSQL test baseline `178.239.117.99:45432/snailjob` |
+| BBS | Container `flarum-test` | `40020` | MySQL test baseline container `rhospital-test-mysql:3306` |
+
+Runtime compose files on OrangeVPS:
+
+```text
+/opt/rhospital-test-runtime/hospital-stack/docker-compose.yml
+/opt/rhospital-test-runtime/snailjob/docker-compose.yml
+/opt/rhospital-test-runtime/flarum/docker-compose.yml
+```
+
+The original read-only production compose file remains:
+
+```text
+/opt/1panel/docker/compose/hospital-stack/docker-compose.yml
+```
+
+Current validation evidence from 2026-06-28:
+
+- `hospital_stack_hospital-backend` reached `1/1`.
+- Backend container health was `healthy`.
+- Backend environment contained `SPRING_DATASOURCE_URL=jdbc:postgresql://178.239.117.99:45432/hospital`.
+- `http://178.239.117.99:8190/` returned HTTP `200`.
+- `flarum-test` returned the BBS homepage from `http://178.239.117.99:40020/`.
+- Flarum test config pointed at `DB_HOST=rhospital-test-mysql`, `DB_PORT=3306`, `DB_NAME=flarum_rtt3ns`, `DB_USER=flarum_test`.
+- Test PostgreSQL was writable and `pg_is_in_recovery() = false`.
+- Official PostgreSQL stayed a read-only standby with `pg_is_in_recovery() = true`.
+- Test MySQL was writable with `read_only=0` and `super_read_only=0`.
+- Official MySQL stayed protected with `read_only=1` and `super_read_only=1`.
+
+Important operational note:
+
+- The active Swarm service `hospital_stack_hospital-backend` currently points to the test PostgreSQL baseline.
+- Before formal cutover, either stop this test runtime or redeploy the official compose after promoting the official databases.
+- Do not switch `RHOSPITAL-GATE` to OrangeVPS while `hospital_stack_hospital-backend` points at `45432`.
+
+Stop test runtime after testing:
+
+```bash
+docker service scale hospital_stack_hospital-backend=0
+docker rm -f snail-job-test flarum-test
+```
+
+Restore official Swarm service specification from the original compose when preparing for cutover:
+
+```bash
+docker stack deploy -c /opt/1panel/docker/compose/hospital-stack/docker-compose.yml hospital_stack
+docker service scale hospital_stack_hospital-backend=0
+```
+
 ## Cleanup
 
 When testing is finished, remove:

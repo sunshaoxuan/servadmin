@@ -119,12 +119,35 @@ Credentials for the writable test baseline are stored only on OrangeVPS:
 
 No test credentials are stored in this repository.
 
+### Application Test Runtime
+
+On 2026-06-28, a temporary application test runtime was started on OrangeVPS so the candidate host can run the old production style services before public cutover.
+
+The test runtime uses production-like external ports on OrangeVPS, while `RHOSPITAL-GATE` still points public traffic to `CLAW-JP-PROD`.
+
+| Component | Runtime | External Port | Database Target |
+|---|---|---:|---|
+| Game backend | `hospital_stack_hospital-backend` | `8190`, `9996`, `17889` | Test PostgreSQL `45432` |
+| snail-job | `snail-job-test` | `38084`, `17888` | Test PostgreSQL `45432` |
+| BBS | `flarum-test` | `40020` | Test MySQL `rhospital-test-mysql:3306` |
+
+Validation from 2026-06-28:
+
+- Backend service reached `1/1` and was healthy.
+- Backend runtime environment pointed at `jdbc:postgresql://178.239.117.99:45432/hospital`.
+- `http://178.239.117.99:8190/` returned HTTP `200`.
+- `http://178.239.117.99:40020/` returned HTTP `200` and loaded the BBS homepage.
+- Test PostgreSQL and test MySQL accepted controlled write probes.
+- Official PostgreSQL and MySQL remained read-only replicas.
+
+This is a test runtime, not the final production runtime. Before cutover, ensure the active backend service is no longer pointing at `45432`.
+
 ## Current Known Gaps Before Cutover
 
 | Gap | Current State | Required Action |
 |---|---|---|
 | Backend image version | Old production uses `hospital-backend:20260626`; OrangeVPS service record still references `hospital-backend:20260625` | Upload or build `hospital-backend:20260626` on OrangeVPS and update stack compose before cutover |
-| OrangeVPS app services | Backend scaled to `0/0`, `snail-job` and `flarum` stopped | Start only after official databases are promoted |
+| OrangeVPS app services | A temporary test runtime is active on production-like ports and points to writable test databases | Stop the test runtime, then start official services only after official databases are promoted |
 | Official OrangeVPS databases | Read-only replicas | Promote during cutover window |
 | Public gateway | Still targets `47.79.38.216` | Replace proxy target with `178.239.117.99` during cutover |
 | Test baseline | Writable snapshot | Use only for testing, do not use as cutover source |
@@ -205,9 +228,10 @@ Run these checks before scheduling the cutover window.
   - `read_only=ON`
   - `super_read_only=ON`
 - Application services remain stopped:
-  - backend `0/0`
-  - `snail-job` stopped
-  - `flarum` stopped
+  - if the temporary test runtime is active, stop it before this checkpoint
+  - backend official runtime should be `0/0`
+  - official `snail-job` should be stopped
+  - official `flarum` should be stopped
 - Writable test baseline remains separate:
   - PostgreSQL test port `45432`
   - MySQL test port `43306`
@@ -235,6 +259,27 @@ Test goals:
 
 Do not use ports `35432` and `33306` for write tests before cutover.
 
+If the 2026-06-28 test runtime is still active, direct checks are:
+
+```text
+Backend test URL: http://178.239.117.99:8190/
+BBS test URL:     http://178.239.117.99:40020/
+```
+
+Before moving into the formal cutover window, stop or replace this runtime:
+
+```bash
+docker service scale hospital_stack_hospital-backend=0
+docker rm -f snail-job-test flarum-test
+```
+
+Then restore the official backend service specification from the official compose:
+
+```bash
+docker stack deploy -c /opt/1panel/docker/compose/hospital-stack/docker-compose.yml hospital_stack
+docker service scale hospital_stack_hospital-backend=0
+```
+
 ## Cutover Window Plan
 
 Target operational impact: keep write freeze within 30 minutes.
@@ -257,6 +302,8 @@ Target operational impact: keep write freeze within 30 minutes.
 - Announce maintenance window to players and BBS users.
 - Confirm no manual deployment is in progress.
 - Confirm all application write-capable services on OrangeVPS remain stopped.
+- Confirm `hospital_stack_hospital-backend` does not point to `45432`.
+- Confirm `flarum-test` and `snail-job-test` are not running.
 - Confirm old production remains healthy.
 - Confirm Sakura and OrangeVPS replicas have zero or acceptable lag.
 - Confirm old production disk has enough room for WAL and binlog retention.
@@ -576,4 +623,3 @@ This plan is based on these repository records:
 - `docs/sakura-postgres-standby-trixie-upgrade-2026-06-26.md`
 - `docs/orangevps-second-replica-2026-06-26.md`
 - `docs/orangevps-test-baseline-2026-06-26.md`
-
