@@ -325,3 +325,49 @@ Do not run both old and new BBS writable paths behind the public domain at the s
 - Decide whether old production MySQL should follow Sakura or remain isolated until retirement.
 - Continue monitoring OrangeVPS Flarum logs, OrangeVPS MySQL disk usage, Sakura replica lag, and gateway errors.
 - Keep old production MySQL until the agreed BBS stable period ends.
+
+## 2026-06-29 Language Package Sync
+
+After the BBS cutover, the new production Flarum UI showed English strings even though old production had the Simplified Chinese language pack enabled.
+
+Investigation result:
+
+```text
+old production package: flarum-lang/chinese-simplified v1.6.0
+old production enabled extension: flarum-lang-chinese-simplified
+new production package before fix: missing from Composer vendor
+new production default_locale: zh-Hans
+new production extension assets: present from copied static assets
+```
+
+Fix applied on OrangeVPS:
+
+```text
+container rebuild: not performed
+database import or reset: not performed
+installed package: flarum-lang/chinese-simplified:v1.6.0
+persistent extension list: /opt/1panel/apps/flarum/flarum/data/extensions/list
+enabled extension: flarum-lang-chinese-simplified
+cache: cleared
+assets: republished
+```
+
+Validation after fix:
+
+```text
+https://bbs.rhospital.cc/ status=200
+title=英雄荣光医院论坛
+html lang=zh-Hans
+visible Chinese UI: 注册, 登录, 全部主题, 标签
+browser console errors: none observed
+database tables: 33
+users: 120
+discussions: 154
+posts: 1589
+```
+
+Screenshot evidence:
+
+```text
+docs/assets/bbs-language-sync-20260629.png
+```
