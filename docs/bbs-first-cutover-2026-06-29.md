@@ -202,6 +202,41 @@ OrangeVPS Flarum logs showed requests arriving from the gateway IP `64.83.37.55`
 
 Login or posting was not exercised in this run because no BBS user login credential was available in the execution context. The login page and homepage loaded correctly through the original domain.
 
+## Interruption Window
+
+No independent one-second external synthetic monitor was running during this cutover. The interruption estimate is based on action timestamps, container logs, and successful HTTP evidence.
+
+Observed timeline in UTC:
+
+| Time | Evidence | Meaning |
+|---|---|---|
+| `2026-06-29T07:47:22Z` | old production `flarum` access log from gateway IP `64.83.37.55`, HTTP `200` | old BBS was still serving public traffic |
+| `2026-06-29T07:49:33Z` | gateway backup `root.conf.bbs-migration-freeze-20260629074933.bak` | BBS maintenance or write fence stage started |
+| `2026-06-29T07:52:01Z` | OrangeVPS `flarum` container `StartedAt` | new BBS container started |
+| `2026-06-29T07:52:03Z` | OrangeVPS `flarum` log, PHP-FPM ready | new BBS runtime ready internally |
+| `2026-06-29T07:52:08Z` | OrangeVPS local access log, HTTP `200` | new BBS passed local check |
+| `2026-06-29T07:52:23Z` | OrangeVPS external direct access log, HTTP `200` | new BBS passed direct external check |
+| `2026-06-29T07:52:51Z` | gateway backup `root.conf.bbs-migration-to-orange-20260629075251.bak` | gateway target switch stage started |
+| `2026-06-29T07:53:23Z` | OrangeVPS `flarum` access log from gateway IP `64.83.37.55`, HTTP `200` | original BBS domain reached OrangeVPS through the gateway |
+| `2026-06-29T07:54:00Z` | old production `flarum` shutdown log | old BBS was stopped after new BBS had served via gateway |
+| `2026-06-29T07:54:51Z` | OrangeVPS `flarum` access log from gateway IP `64.83.37.55`, HTTP `200` | follow-up public-domain validation remained healthy |
+
+Best estimate for user-visible BBS interruption:
+
+```text
+2026-06-29T07:49:33Z to 2026-06-29T07:53:23Z
+= 3 minutes 50 seconds
+```
+
+Conservative validation window:
+
+```text
+2026-06-29T07:49:33Z to 2026-06-29T07:54:51Z
+= 5 minutes 18 seconds
+```
+
+The second number includes extra operator validation time after the first successful gateway-served `200`.
+
 ## Old Production BBS Stop
 
 After public validation through the original domain, old production Flarum was stopped.
