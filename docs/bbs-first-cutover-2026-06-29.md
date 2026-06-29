@@ -371,3 +371,76 @@ Screenshot evidence:
 ```text
 docs/assets/bbs-language-sync-20260629.png
 ```
+
+## 2026-06-29 Extension Package Sync
+
+After the BBS cutover, two moderator functions were missing on new production:
+
+```text
+stick a discussion above all tags
+stick a discussion only inside the current tag
+edit published posts
+```
+
+Investigation result:
+
+```text
+database permissions: present on new production
+discussion.editPosts: group 4
+discussion.sticky: group 4
+discussion.stickiest: group 4
+discussion.stickiest.tagSticky: group 4
+old production package for enhanced sticky behavior: the-turk/flarum-stickiest 3.0.1
+new production package before fix: missing from Composer vendor
+new production migrations: already present from migrated database
+```
+
+The root cause was that old production had third-party Flarum extension packages installed and enabled, while new production only had the migrated database rows and a reduced Composer vendor set.
+
+The missing packages were installed in the running OrangeVPS `flarum` container with the same versions observed on old production:
+
+```text
+v17development/flarum-seo:v2.0.9
+the-turk/flarum-stickiest:3.0.1
+fof/user-bio:1.4.3
+fof/upload:1.9.0
+fof/sitemap:2.6.1
+fof/oauth:1.7.3
+fof/links:1.4.0
+clarkwinkelmann/flarum-ext-no-email-notifications:1.0.0
+clarkwinkelmann/flarum-ext-emojionearea:1.1.1
+```
+
+Fix applied on OrangeVPS:
+
+```text
+container rebuild: not performed
+database import or reset: not performed
+persistent extension list: /opt/1panel/apps/flarum/flarum/data/extensions/list
+Flarum migrate result: Nothing to migrate
+cache: cleared
+assets: republished
+```
+
+Validation after fix:
+
+```text
+https://bbs.rhospital.cc/ status=200
+html lang=zh-Hans
+forum.js contains stickiest code
+forum.js contains edit-related code
+browser console errors: none observed
+enabled extensions count: 21
+the-turk-stickiest enabled: true
+fof-upload enabled: true
+clarkwinkelmann-emojionearea enabled: true
+users: 120
+discussions: 155
+posts: 1591
+```
+
+Screenshot evidence:
+
+```text
+docs/assets/bbs-extension-sync-20260629.png
+```
