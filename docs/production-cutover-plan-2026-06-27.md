@@ -4,7 +4,7 @@
 
 This document is the production cutover plan for moving public traffic from `CLAW-JP-PROD` to `RHospital.OrangeVPS`.
 
-This is a plan only. No cutover action is performed by this document.
+The BBS first-version cutover was completed on 2026-06-29. The game backend cutover is still pending.
 
 The cutover uses `RHOSPITAL-GATE` as the single public entry point. DNS does not need to change. The actual public switch is an OpenResty proxy target change on `RHOSPITAL-GATE`.
 
@@ -17,23 +17,32 @@ The cutover uses `RHOSPITAL-GATE` as the single public entry point. DNS does not
 | Backup mirror | `SAKURA-HOSP-DBBACK` | `160.16.91.200` | PostgreSQL and MySQL mirror |
 | Public gateway | `RHOSPITAL-GATE` | `64.83.37.55` | OpenResty front proxy and TLS endpoint |
 
-Current replication direction:
+Current replication direction for game PostgreSQL:
 
 ```text
 CLAW-JP-PROD PostgreSQL -> SAKURA-HOSP-DBBACK
 CLAW-JP-PROD PostgreSQL -> RHospital.OrangeVPS
-
-CLAW-JP-PROD MySQL -> SAKURA-HOSP-DBBACK
-CLAW-JP-PROD MySQL -> RHospital.OrangeVPS
 ```
 
-Current public traffic direction:
+Current replication direction for BBS MySQL:
+
+```text
+RHospital.OrangeVPS MySQL -> SAKURA-HOSP-DBBACK MySQL
+```
+
+Current public traffic direction for game services:
 
 ```text
 Internet -> RHOSPITAL-GATE -> CLAW-JP-PROD
 ```
 
-Target public traffic direction after cutover:
+Current public traffic direction for BBS:
+
+```text
+Internet -> RHOSPITAL-GATE -> RHospital.OrangeVPS
+```
+
+Target game public traffic direction after cutover:
 
 ```text
 Internet -> RHOSPITAL-GATE -> RHospital.OrangeVPS
@@ -43,6 +52,12 @@ Target post-cutover replication direction:
 
 ```text
 RHospital.OrangeVPS -> SAKURA-HOSP-DBBACK -> CLAW-JP-PROD
+```
+
+BBS MySQL has already moved to this first leg:
+
+```text
+RHospital.OrangeVPS MySQL -> SAKURA-HOSP-DBBACK MySQL
 ```
 
 ## Completed Preparation Work
@@ -94,6 +109,7 @@ RHospital.OrangeVPS -> SAKURA-HOSP-DBBACK -> CLAW-JP-PROD
   - `read_only=ON`
   - `super_read_only=ON`
 - Confirmed old production sees both Sakura and OrangeVPS as MySQL replicas.
+- On 2026-06-29, promoted OrangeVPS MySQL for BBS and repointed Sakura MySQL to follow OrangeVPS.
 
 ### Writable Test Baseline
 
@@ -109,7 +125,7 @@ The official cutover candidate remains:
 | Component | Container | Port | Purpose |
 |---|---|---:|---|
 | Official PostgreSQL | `postgresql` | `35432` | Read-only cutover candidate |
-| Official MySQL | `mysql` | `33306` | Read-only cutover candidate |
+| Official MySQL | `mysql` | `33306` | BBS writer after 2026-06-29 first-version cutover |
 
 Credentials for the writable test baseline are stored only on OrangeVPS:
 
@@ -138,18 +154,39 @@ Validation from 2026-06-28:
 - `http://178.239.117.99:8190/` returned HTTP `200`.
 - `http://178.239.117.99:40020/` returned HTTP `200` and loaded the BBS homepage.
 - Test PostgreSQL and test MySQL accepted controlled write probes.
-- Official PostgreSQL and MySQL remained read-only replicas.
+- Official PostgreSQL remained a read-only replica. Official MySQL was later promoted for BBS during the 2026-06-29 first-version cutover.
 
-This is a test runtime, not the final production runtime. Before cutover, ensure the active backend service is no longer pointing at `45432`.
+This was a test runtime for the pre-cutover stage. The BBS test runtime and BBS test MySQL were removed during the 2026-06-29 BBS first-version cutover. The game test PostgreSQL and game test runtime were preserved.
+
+### BBS First-version Cutover
+
+Completed on 2026-06-29.
+
+Current BBS state:
+
+| Component | Current State |
+|---|---|
+| Public domain | `https://bbs.rhospital.cc/` |
+| Public DNS | `bbs.rhospital.cc CNAME rhospital.cc`, `rhospital.cc A 64.83.37.55` |
+| Gateway target | `178.239.117.99:40020` |
+| OrangeVPS Flarum | `flarum` running, image `crazymax/flarum:1.8.10` |
+| OrangeVPS MySQL | writable, binlog enabled, `server_id=178239117` |
+| Sakura MySQL mirror | follows OrangeVPS, lag `0` |
+| Old production Flarum | stopped |
+| Old production MySQL | retained for inspection and fallback data decisions |
+
+See `docs/bbs-first-cutover-2026-06-29.md` for the execution report and evidence.
 
 ## Current Known Gaps Before Cutover
 
 | Gap | Current State | Required Action |
 |---|---|---|
 | Backend image version | Old production uses `hospital-backend:20260626`; OrangeVPS service record still references `hospital-backend:20260625` | Upload or build `hospital-backend:20260626` on OrangeVPS and update stack compose before cutover |
-| OrangeVPS app services | A temporary test runtime is active on production-like ports and points to writable test databases | Stop the test runtime, then start official services only after official databases are promoted |
-| Official OrangeVPS databases | Read-only replicas | Promote during cutover window |
-| Public gateway | Still targets `47.79.38.216` | Replace proxy target with `178.239.117.99` during cutover |
+| OrangeVPS game app services | A temporary game test runtime may still be active on production-like ports and points to writable test PostgreSQL | Stop the game test runtime, then start official game services only after official PostgreSQL is promoted |
+| Official OrangeVPS PostgreSQL | Read-only replica | Promote during the game cutover window |
+| Official OrangeVPS MySQL | Already promoted and serving BBS | Keep it running, do not reset it during game cutover |
+| Public gateway for game domains | Still targets `47.79.38.216` | Replace game proxy targets with `178.239.117.99` during game cutover |
+| Public gateway for `bbs.rhospital.cc` | Already targets `178.239.117.99:40020` | Monitor, do not switch again during game cutover |
 | Test baseline | Writable snapshot | Use only for testing, do not use as cutover source |
 
 ## Public Gateway Configuration
@@ -172,7 +209,7 @@ Current proxy targets:
 | `hero-hospital.icu` root | `47.79.38.216:8190` | `178.239.117.99:8190` |
 | `rhospital-api-services.com` root | `47.79.38.216:8190` | `178.239.117.99:8190` |
 | `/api/` | `47.79.38.216:8190` | `178.239.117.99:8190` |
-| `bbs.rhospital.cc` | `47.79.38.216:40020` | `178.239.117.99:40020` |
+| `bbs.rhospital.cc` | `178.239.117.99:40020` | completed on 2026-06-29 |
 | `bbs.rhospital-api-services.com` | `47.79.38.216:40020` | `178.239.117.99:40020` |
 | `bbs.hero-hospital.icu` | `47.79.38.216:40020` | `178.239.117.99:40020` |
 
@@ -193,10 +230,8 @@ Run these checks before scheduling the cutover window.
   - `rhospital_backup_160_16_91_200` active
   - `rhospital_backup_178_239_117_99` active
   - retained WAL bytes acceptable, target is `0`
-- MySQL source sees:
-  - Sakura replica server id `1601691200`
-  - OrangeVPS replica server id `178239117`
-  - both binlog dump connections active
+- Old production Flarum remains stopped.
+- Old production MySQL remains available for inspection and fallback data decisions.
 
 ### Sakura Mirror Health
 
@@ -208,6 +243,7 @@ Run these checks before scheduling the cutover window.
   - collation mismatch count `0`
 - MySQL:
   - `rhospital-bbs-mysql-replica` running
+  - source host is `178.239.117.99`
   - `Replica_IO_Running=Yes`
   - `Replica_SQL_Running=Yes`
   - `Seconds_Behind_Source=0`
@@ -222,16 +258,15 @@ Run these checks before scheduling the cutover window.
   - collation mismatch count `0`
 - MySQL:
   - official container `mysql` running
-  - `Replica_IO_Running=Yes`
-  - `Replica_SQL_Running=Yes`
-  - `Seconds_Behind_Source=0`
-  - `read_only=ON`
-  - `super_read_only=ON`
-- Application services remain stopped:
-  - if the temporary test runtime is active, stop it before this checkpoint
+  - BBS writer after 2026-06-29 first-version cutover
+  - `read_only=OFF`
+  - `super_read_only=OFF`
+  - binlog enabled for Sakura downstream replication
+- Game application services remain controlled:
+  - if the temporary game test runtime is active, stop it before the game cutover checkpoint
   - backend official runtime should be `0/0`
-  - official `snail-job` should be stopped
-  - official `flarum` should be stopped
+  - official game `snail-job` should be stopped until game database promotion
+  - official `flarum` should remain running for BBS
 - Writable test baseline remains separate:
   - PostgreSQL test port `45432`
   - MySQL test port `43306`
@@ -252,25 +287,26 @@ Test goals:
 - Start a temporary backend stack against test PostgreSQL.
 - Verify login or health endpoint.
 - Verify a write path against `hospital`.
-- Verify Flarum against test MySQL if needed.
+- Verify BBS only through the already public OrangeVPS runtime.
 - Verify static assets and uploaded files.
 - Verify no test traffic reaches official ports `35432` and `33306`.
 - Remove temporary backend test service after testing.
 
-Do not use ports `35432` and `33306` for write tests before cutover.
+Do not use ports `35432` and `33306` for game write tests before cutover. Port `33306` is now the BBS MySQL writer and must not be reset for game testing.
 
-If the 2026-06-28 test runtime is still active, direct checks are:
+If the 2026-06-28 game test runtime is still active, the direct backend check is:
 
 ```text
 Backend test URL: http://178.239.117.99:8190/
-BBS test URL:     http://178.239.117.99:40020/
 ```
 
-Before moving into the formal cutover window, stop or replace this runtime:
+`http://178.239.117.99:40020/` is now official BBS runtime, not a test URL.
+
+Before moving into the formal game cutover window, stop or replace the game test runtime:
 
 ```bash
 docker service scale hospital_stack_hospital-backend=0
-docker rm -f snail-job-test flarum-test
+docker rm -f snail-job-test
 ```
 
 Then restore the official backend service specification from the official compose:
@@ -292,7 +328,7 @@ Target operational impact: keep write freeze within 30 minutes.
 - Confirm the compose environment still points to official OrangeVPS database ports:
   - PostgreSQL `178.239.117.99:35432`
   - snail-job `178.239.117.99`
-- Confirm Flarum config points to official MySQL container.
+- Confirm Flarum is still running against the official MySQL container.
 - Confirm writable test baseline is not referenced by production compose files.
 - Prepare gateway config backups.
 - Prepare rollback command snippets, but do not run them.
@@ -303,7 +339,8 @@ Target operational impact: keep write freeze within 30 minutes.
 - Confirm no manual deployment is in progress.
 - Confirm all application write-capable services on OrangeVPS remain stopped.
 - Confirm `hospital_stack_hospital-backend` does not point to `45432`.
-- Confirm `flarum-test` and `snail-job-test` are not running.
+- Confirm `flarum-test` is not running.
+- Confirm `snail-job-test` is not running before game cutover.
 - Confirm old production remains healthy.
 - Confirm Sakura and OrangeVPS replicas have zero or acceptable lag.
 - Confirm old production disk has enough room for WAL and binlog retention.
@@ -348,16 +385,16 @@ Check OrangeVPS official PostgreSQL:
 
 Check OrangeVPS official MySQL:
 
-- `Replica_IO_Running=Yes`
-- `Replica_SQL_Running=Yes`
-- `Seconds_Behind_Source=0`
-- source file and exec position at latest known source position
+- BBS remains healthy through `https://bbs.rhospital.cc/`
+- `read_only=OFF`
+- `super_read_only=OFF`
+- Sakura downstream replica lag remains `0`
 
 Check old production:
 
 - OrangeVPS PostgreSQL standby replay lag bytes `0`
 - OrangeVPS PostgreSQL slot retained WAL bytes `0`
-- OrangeVPS MySQL binlog dump connection active
+- old production Flarum remains stopped
 
 If any final catch-up check fails, keep gateway pointing to old production and stop the cutover.
 
@@ -371,26 +408,23 @@ Promote PostgreSQL on OrangeVPS:
 - verify collation mismatch count `0`
 - perform a controlled write probe if required, then remove the probe object
 
-Promote MySQL on OrangeVPS:
+Keep MySQL on OrangeVPS as the current BBS writer:
 
-- stop replica
-- reset replica metadata when final position is confirmed
-- set `read_only=OFF`
-- set `super_read_only=OFF`
+- do not stop or reset OrangeVPS MySQL during the game cutover
 - verify Flarum database table count
-- perform a controlled write probe if required, then remove the probe table
+- verify Sakura still follows OrangeVPS with lag `0`
+- perform no BBS write probe during the game cutover unless a BBS validation owner approves it
 
-Do not start applications until both databases are writable and verified.
+Do not start game applications until PostgreSQL is writable and verified.
 
 ### T plus 10 to 15 minutes, start OrangeVPS application services
 
 Start database-dependent services in this order:
 
 1. PostgreSQL official container is already running and writable
-2. MySQL official container is already running and writable
+2. MySQL official container remains running for BBS
 3. `snail-job`
-4. Flarum
-5. backend Swarm service
+4. backend Swarm service
 
 Backend startup requirements:
 
@@ -406,7 +440,7 @@ Backend startup requirements:
 Verify local OrangeVPS endpoints before gateway switch:
 
 - backend `http://127.0.0.1:8190/`
-- BBS `http://127.0.0.1:40020/`
+- BBS `http://127.0.0.1:40020/`, monitor only because it is already public
 - snail-job port and logs
 - database writes from application logs
 
@@ -442,7 +476,7 @@ Validate through `RHOSPITAL-GATE`:
 - `rhospital.cc`
 - `hero-hospital.icu`
 - `rhospital-api-services.com`
-- `bbs.rhospital.cc`
+- `bbs.rhospital.cc`, already on OrangeVPS after the BBS first-version cutover
 - `bbs.rhospital-api-services.com`
 - `bbs.hero-hospital.icu`
 
@@ -537,17 +571,35 @@ Recommended sequence:
 
 ### MySQL Post-cutover
 
+The BBS MySQL first leg was completed on 2026-06-29:
+
+```text
+RHospital.OrangeVPS MySQL -> SAKURA-HOSP-DBBACK MySQL
+```
+
+Current Sakura BBS MySQL mirror state:
+
+- container `rhospital-bbs-mysql-replica` running
+- `Source_Host=178.239.117.99`
+- `Source_Port=33306`
+- `Replica_IO_Running=Yes`
+- `Replica_SQL_Running=Yes`
+- `Seconds_Behind_Source=0`
+- `read_only=ON`
+- `super_read_only=ON`
+
+Old production MySQL remains available for inspection. Repointing old production MySQL downstream of Sakura is still a separate decision.
+
 Recommended sequence:
 
-1. Ensure OrangeVPS MySQL has binlog enabled and unique server id.
-2. Configure Sakura MySQL replica to follow OrangeVPS.
-3. Confirm Sakura:
+1. Ensure OrangeVPS MySQL remains binlog enabled with unique server id.
+2. Confirm Sakura continues to follow OrangeVPS:
    - `Replica_IO_Running=Yes`
    - `Replica_SQL_Running=Yes`
    - `Seconds_Behind_Source=0`
-4. Configure old production MySQL to follow Sakura if old production remains in lifecycle.
-5. Confirm old production is read-only downstream.
-6. Remove old production source users and obsolete replication credentials after retirement.
+3. Configure old production MySQL to follow Sakura if old production remains in lifecycle.
+4. Confirm old production is read-only downstream.
+5. Remove old production source users and obsolete replication credentials after retirement.
 
 ## Monitoring After Cutover
 
@@ -557,7 +609,7 @@ Monitor continuously for at least 24 hours:
 - OrangeVPS backend logs
 - OrangeVPS `docker service ps hospital_stack_hospital-backend`
 - OrangeVPS PostgreSQL logs
-- OrangeVPS MySQL logs
+- OrangeVPS MySQL logs for BBS
 - Flarum container logs
 - snail-job logs
 - database disk usage
@@ -594,7 +646,7 @@ Cleanup must happen only after:
 Proceed only if every item below is true:
 
 - OrangeVPS PostgreSQL official replica lag is `0` or explicitly accepted.
-- OrangeVPS MySQL official replica delay is `0` or explicitly accepted.
+- OrangeVPS MySQL is writable for BBS and Sakura MySQL mirror delay is `0` or explicitly accepted.
 - Sakura PostgreSQL and MySQL mirrors are healthy.
 - OrangeVPS backend image matches planned production version.
 - OrangeVPS application services are stopped before promotion.
@@ -607,7 +659,7 @@ Proceed only if every item below is true:
 Stop the cutover if any item below is true:
 
 - PostgreSQL final replay lag does not converge.
-- MySQL final `Seconds_Behind_Source` does not converge.
+- Sakura MySQL downstream delay from OrangeVPS does not converge.
 - OrangeVPS database promotion fails.
 - OrangeVPS backend fails health checks.
 - Flarum cannot access MySQL.
@@ -623,3 +675,4 @@ This plan is based on these repository records:
 - `docs/sakura-postgres-standby-trixie-upgrade-2026-06-26.md`
 - `docs/orangevps-second-replica-2026-06-26.md`
 - `docs/orangevps-test-baseline-2026-06-26.md`
+- `docs/bbs-first-cutover-2026-06-29.md`
