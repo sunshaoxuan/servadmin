@@ -676,3 +676,27 @@ This plan is based on these repository records:
 - `docs/orangevps-second-replica-2026-06-26.md`
 - `docs/orangevps-test-baseline-2026-06-26.md`
 - `docs/bbs-first-cutover-2026-06-29.md`
+## 2026-06-29 Main Game Cutover Completion
+
+The main game cutover was executed during the Tokyo `21:00-23:00` window.
+
+Execution report:
+
+```text
+docs/main-game-cutover-2026-06-29.md
+```
+
+Final topology:
+
+```text
+Internet
+  -> Cloudflare DNS, unchanged
+  -> RHOSPITAL-GATE 64.83.37.55
+  -> OrangeVPS backend 178.239.117.99:8190
+  -> OrangeVPS PostgreSQL primary 178.239.117.99:35432
+  -> Sakura PostgreSQL standby 160.16.91.200
+```
+
+Old production game backend, old production `snail-job`, and old production PostgreSQL are stopped. Old production MySQL remains running because BBS MySQL was outside the main game migration.
+
+The measured user-visible maintenance estimate was `15 minutes 42 seconds`, from the first gateway maintenance response to the gateway switch to OrangeVPS and first successful public-domain validation.
