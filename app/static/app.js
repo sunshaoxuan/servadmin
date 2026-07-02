@@ -10,6 +10,8 @@ const state = {
   connectionSecretRequests: {},
   activeTab: "servers",
   services: null,
+  environmentSelectedId: null,
+  environmentRunning: {},
 };
 
 const $ = (id) => document.getElementById(id);
@@ -45,6 +47,8 @@ async function loadAll() {
   state.audit = await api("/api/audit");
   if (!state.selectedId && state.servers.length) state.selectedId = state.servers[0].id;
   if (state.selectedId && !state.servers.some((s) => s.id === state.selectedId)) state.selectedId = state.servers[0]?.id || null;
+  if (!state.environmentSelectedId && state.servers.length) state.environmentSelectedId = state.selectedId || state.servers[0].id;
+  if (state.environmentSelectedId && !state.servers.some((s) => s.id === state.environmentSelectedId)) state.environmentSelectedId = state.servers[0]?.id || null;
   render();
 }
 
@@ -111,6 +115,7 @@ function render() {
   renderDetail();
   renderAudit();
   renderAuditDrawer();
+  renderEnvironment();
 }
 
 function showTab(tab) {
@@ -118,12 +123,19 @@ function showTab(tab) {
   document.querySelectorAll(".nav-item[data-tab], .mobile-tab[data-tab]").forEach((item) => {
     item.classList.toggle("active", item.dataset.tab === tab);
   });
+  const serversVisible = tab === "servers" || tab === "audit";
+  const environment = tab === "environment";
   const settings = tab === "settings";
-  $("serversView").classList.toggle("hidden", settings);
+  $("serversView").classList.toggle("hidden", !serversVisible);
+  $("environmentView").classList.toggle("hidden", !environment);
   $("settingsView").classList.toggle("hidden", !settings);
-  document.querySelector(".search-wrap").classList.toggle("hidden", settings);
-  $("addBtn").classList.toggle("hidden", settings);
-  $("pageTitle").textContent = settings ? "设置" : "服务器管理";
+  document.querySelector(".search-wrap").classList.toggle("hidden", !serversVisible);
+  $("addBtn").classList.toggle("hidden", !serversVisible);
+  $("pageTitle").textContent = environment ? "环境检测" : settings ? "设置" : "服务器管理";
+  if (environment) {
+    renderEnvironment();
+    return;
+  }
   if (settings) {
     $("summaryText").textContent = "应用和服务状态";
     refreshServices();
@@ -299,6 +311,178 @@ async function refreshServices() {
     $("servicesSummary").textContent = "状态刷新失败";
     $("serviceStatusGrid").innerHTML = `<div class="service-loading error">${escapeHtml(error.message)}</div>`;
   }
+}
+
+function renderEnvironment() {
+  const checked = state.servers.filter((s) => s.last_config_check_at).length;
+  const ok = state.servers.filter((s) => s.config_status === "ok").length;
+  const attention = state.servers.filter((s) => ["warning", "error"].includes(s.config_status)).length;
+  const last = state.servers.map((s) => s.last_config_check_at).filter(Boolean).sort().pop() || "";
+  if (!state.environmentSelectedId && state.servers.length) state.environmentSelectedId = state.servers[0].id;
+  const selectedServer = state.servers.find((s) => s.id === state.environmentSelectedId) || state.servers[0] || null;
+  if (selectedServer) state.environmentSelectedId = selectedServer.id;
+
+  if (state.activeTab === "environment") {
+    $("summaryText").textContent = `${checked}/${state.servers.length} 台节点已生成环境报告`;
+  }
+  $("environmentSummary").textContent = state.servers.length
+    ? "按节点触发系统、资源、网络和服务检查。"
+    : "先新增服务器节点，再进行环境检测。";
+  $("envMetricTotal").textContent = state.servers.length;
+  $("envMetricChecked").textContent = `${checked} 台已检查`;
+  $("envMetricOk").textContent = ok;
+  $("envMetricAttention").textContent = attention;
+  $("envMetricLast").textContent = last ? last.slice(0, 16) : "无";
+  $("environmentNodeGrid").innerHTML = state.servers.length
+    ? state.servers.map(environmentNodeHtml).join("")
+    : `<div class="service-loading">暂无节点</div>`;
+  $("environmentReportSummary").textContent = selectedServer
+    ? `${selectedServer.name}，${formatDateTime(selectedServer.last_config_check_at)}`
+    : "检测完成后在这里展示节点环境报告。";
+  $("environmentReportBody").innerHTML = environmentReportHtml(selectedServer);
+}
+
+function environmentNodeHtml(server) {
+  const report = server.config_report || {};
+  const running = Boolean(state.environmentRunning[server.id]);
+  const selectedClass = server.id === state.environmentSelectedId ? "active" : "";
+  const osName = osDisplay(report);
+  const cpu = report.cpu_count || report.cpu?.count || "未记录";
+  const memory = report.memory || "未记录";
+  const score = Number.isFinite(report.health_score) ? report.health_score : 0;
+  return `
+    <article class="environment-node ${selectedClass}" data-env-id="${server.id}">
+      <div class="environment-node-top">
+        <div>
+          <strong>${escapeHtml(server.name)}</strong>
+          <span>${escapeHtml(server.hostname)}</span>
+        </div>
+        ${statusPill(server.config_status || "unknown", configLabel(server.config_status), "config")}
+      </div>
+      <div class="environment-node-score">
+        <span>${escapeHtml(String(score || "未评分"))}</span>
+        <small>环境评分</small>
+      </div>
+      <dl class="environment-node-facts">
+        <dt>系统</dt><dd>${escapeHtml(osName)}</dd>
+        <dt>CPU</dt><dd>${escapeHtml(cpu)}</dd>
+        <dt>内存</dt><dd>${escapeHtml(memory)}</dd>
+        <dt>检查</dt><dd>${escapeHtml(formatDateTime(server.last_config_check_at))}</dd>
+      </dl>
+      <div class="environment-node-actions">
+        <button class="btn btn-primary btn-sm" type="button" data-env-action="inspect" data-env-id="${server.id}" ${running ? "disabled" : ""}>
+          <i class="ti ti-list-search"></i>${running ? "检测中" : "检测"}
+        </button>
+        <button class="btn btn-light btn-sm" type="button" data-env-action="select" data-env-id="${server.id}">
+          <i class="ti ti-report"></i>查看报告
+        </button>
+      </div>
+    </article>`;
+}
+
+async function inspectEnvironmentNode(serverId) {
+  state.environmentSelectedId = serverId;
+  state.environmentRunning[serverId] = true;
+  renderEnvironment();
+  try {
+    await api(`/api/servers/${serverId}/inspect`, { method: "POST" });
+  } finally {
+    delete state.environmentRunning[serverId];
+  }
+  await loadAll();
+}
+
+async function inspectAllEnvironment() {
+  for (const server of state.servers) {
+    await inspectEnvironmentNode(server.id);
+  }
+}
+
+function environmentReportHtml(server) {
+  if (!server) return `<div class="service-loading">暂无节点</div>`;
+  const report = server.config_report || {};
+  if (!server.last_config_check_at && server.config_status === "unknown") {
+    return `<div class="service-loading">选择节点后点击检测生成环境报告。</div>`;
+  }
+  if (report.error) {
+    return `<div class="environment-error">${escapeHtml(report.error)}</div>`;
+  }
+  const sections = [
+    {
+      title: "一、操作系统信息",
+      rows: [
+        ["容器/虚拟化", report.runtime?.virtualization || "未记录"],
+        ["架构", report.cpu?.architecture || "未记录"],
+        ["操作系统/内核", `${osDisplay(report)} ${report.kernel || ""}`.trim()],
+        ["运行时间", report.runtime?.uptime || "未记录"],
+        ["负载", report.runtime?.load_average || "未记录"],
+        ["进程/服务", `${report.runtime?.processes || "?"} 进程，${report.runtime?.active_services || "?"} 活跃服务`],
+        ["区域设置", `${report.runtime?.locale || "未记录"} ${report.runtime?.timezone || ""}`.trim()],
+      ],
+    },
+    {
+      title: "二、硬件资源",
+      rows: [
+        ["CPU", report.cpu?.model || `${report.cpu_count || "未记录"} 核`],
+        ["CPU 核心", report.cpu_count || "未记录"],
+        ["内存", memorySummary(report)],
+        ["根分区", report.disk_root || "未记录"],
+        ["磁盘列表", lineSummary(report.disks || [])],
+      ],
+    },
+    {
+      title: "三、网络策略",
+      rows: [
+        ["地址", lineSummary(report.network?.addresses || [])],
+        ["TCP 拥塞控制", report.network?.tcp?.congestion_control || "未记录"],
+        ["队列调度", report.network?.tcp?.qdisc || "未记录"],
+        ["TCP 接收缓冲", report.network?.tcp?.tcp_rmem || "未记录"],
+        ["TCP 发送缓冲", report.network?.tcp?.tcp_wmem || "未记录"],
+        ["网络明细", lineSummary(report.report_sections?.network || [])],
+      ],
+    },
+    {
+      title: "四、服务和端口",
+      rows: [
+        ["应用数量", `${(server.installed_apps || []).length} 项`],
+        ["服务数量", `${(server.services || []).length} 项`],
+        ["外部监听", `${report.external_service_count || 0} 项`],
+        ["自装服务", lineSummary((server.services || []).filter((item) => (item.category || "custom") !== "system").map((item) => item.name).slice(0, 8))],
+        ["端口样本", lineSummary(report.report_sections?.ports || [])],
+      ],
+    },
+    {
+      title: "五、应用清单",
+      rows: [
+        ["自装应用", lineSummary((server.installed_apps || []).filter((item) => (item.category || "custom") !== "system").map((item) => `${item.name} ${item.version || ""}`).slice(0, 10))],
+        ["系统基础应用", `${(server.installed_apps || []).filter((item) => item.category === "system").length} 项`],
+      ],
+    },
+  ];
+  return `
+    <div class="terminal-report">
+      <div class="report-banner">
+        <span>Server Desk 环境质量体检报告</span>
+        <strong>${escapeHtml(server.name)}，${escapeHtml(server.hostname)}</strong>
+        <small>报告时间：${escapeHtml(formatDateTime(server.last_config_check_at))}，环境评分：${escapeHtml(String(report.health_score || "未评分"))}</small>
+      </div>
+      ${sections.map(reportSectionHtml).join("")}
+    </div>`;
+}
+
+function reportSectionHtml(section) {
+  return `
+    <section class="report-section">
+      <h3>${escapeHtml(section.title)}</h3>
+      <div class="report-row-list">
+        ${section.rows.map(([label, value]) => `
+          <div class="report-row">
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(value || "未记录")}</strong>
+          </div>
+        `).join("")}
+      </div>
+    </section>`;
 }
 
 function openForm(server = null) {
@@ -580,15 +764,34 @@ function sshCommand(server, platform) {
   return { command: args.join(" "), hint };
 }
 
-function configReportHtml(report) {
+function osDisplay(report) {
+  if (report.os_name) return report.os_name;
   const osName = (report.os || []).find((line) => line.startsWith("PRETTY_NAME=")) || "";
-  const cleanOs = osName ? osName.replace("PRETTY_NAME=", "").replace(/^"|"$/g, "") : "未记录";
+  return osName ? osName.replace("PRETTY_NAME=", "").replace(/^"|"$/g, "") : "未记录";
+}
+
+function memorySummary(report) {
+  const detail = report.memory_detail || {};
+  if (detail.memory_total || detail.memory_used || detail.memory_available) {
+    return `${detail.memory_used || "?"} / ${detail.memory_total || "?"}，可用 ${detail.memory_available || "?"}`;
+  }
+  return report.memory || "未记录";
+}
+
+function lineSummary(lines) {
+  const values = Array.isArray(lines) ? lines.filter(Boolean) : [];
+  if (!values.length) return "未记录";
+  return values.slice(0, 6).join(" / ");
+}
+
+function configReportHtml(report) {
   const items = [
-    ["系统", cleanOs],
+    ["系统", osDisplay(report)],
     ["内核", report.kernel || "未记录"],
     ["CPU", report.cpu_count || "未记录"],
-    ["内存", report.memory || "未记录"],
+    ["内存", memorySummary(report)],
     ["磁盘", report.disk_root || "未记录"],
+    ["网络", lineSummary(report.network?.addresses || [])],
   ];
   if (report.error) items.unshift(["错误", report.error]);
   return items.map(([key, value]) => `<span class="config-line"><strong>${escapeHtml(key)}</strong>${escapeHtml(value)}</span>`).join("");
@@ -706,6 +909,19 @@ $("detailTabs").addEventListener("click", (event) => {
   renderDetailTabs();
 });
 $("refreshServicesBtn").addEventListener("click", refreshServices);
+$("runAllEnvironmentBtn").addEventListener("click", inspectAllEnvironment);
+$("environmentNodeGrid").addEventListener("click", async (event) => {
+  const actionButton = event.target.closest("[data-env-action]");
+  const node = event.target.closest("[data-env-id]");
+  const serverId = Number(actionButton?.dataset.envId || node?.dataset.envId);
+  if (!serverId) return;
+  if (actionButton?.dataset.envAction === "inspect") {
+    await inspectEnvironmentNode(serverId);
+    return;
+  }
+  state.environmentSelectedId = serverId;
+  renderEnvironment();
+});
 document.querySelectorAll(".nav-item[data-tab], .mobile-tab[data-tab]").forEach((item) => {
   item.addEventListener("click", () => showTab(item.dataset.tab || "servers"));
 });

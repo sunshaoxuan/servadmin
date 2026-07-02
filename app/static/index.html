@@ -7,7 +7,7 @@
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230f766e'/%3E%3Ctext x='32' y='39' font-size='22' text-anchor='middle' font-family='Arial' font-weight='700' fill='white'%3ESD%3C/text%3E%3C/svg%3E" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0-beta20/dist/css/tabler.min.css" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.28.1/dist/tabler-icons.min.css" />
-    <link rel="stylesheet" href="static/styles.css?v=20260622-servicedot1" />
+    <link rel="stylesheet" href="static/styles.css?v=20260702-envreport1" />
   </head>
   <body>
     <main id="loginView" class="login-screen">
@@ -36,6 +36,7 @@
         <nav class="nav-list">
           <button class="nav-item active" data-tab="servers"><i class="ti ti-server-2"></i><span>服务器</span></button>
           <button class="nav-item" data-tab="audit"><i class="ti ti-activity"></i><span>审计</span></button>
+          <button class="nav-item" data-tab="environment"><i class="ti ti-clipboard-check"></i><span>环境检测</span></button>
           <button class="nav-item" data-tab="settings"><i class="ti ti-settings"></i><span>设置</span></button>
         </nav>
         <div class="sidebar-foot">
@@ -63,6 +64,7 @@
         <nav class="mobile-tabs">
           <button class="mobile-tab active" data-tab="servers"><i class="ti ti-server-2"></i><span>服务器</span></button>
           <button class="mobile-tab" data-tab="audit"><i class="ti ti-activity"></i><span>审计</span></button>
+          <button class="mobile-tab" data-tab="environment"><i class="ti ti-clipboard-check"></i><span>环境</span></button>
           <button class="mobile-tab" data-tab="settings"><i class="ti ti-settings"></i><span>设置</span></button>
         </nav>
 
@@ -292,6 +294,67 @@
         </section>
         </section>
 
+        <section id="environmentView" class="tab-panel hidden">
+          <section class="environment-hero">
+            <div>
+              <h2>环境检测报告</h2>
+              <p id="environmentSummary">选择节点后可触发检查并生成报告。</p>
+            </div>
+            <div class="environment-actions">
+              <button id="runAllEnvironmentBtn" class="btn btn-primary"><i class="ti ti-player-play"></i>检查全部节点</button>
+            </div>
+          </section>
+
+          <section class="environment-metrics">
+            <div class="metric-card">
+              <span class="metric-icon metric-total"><i class="ti ti-server-2"></i></span>
+              <div>
+                <span>节点</span>
+                <strong id="envMetricTotal">0</strong>
+                <small id="envMetricChecked">0 台已检查</small>
+              </div>
+            </div>
+            <div class="metric-card">
+              <span class="metric-icon metric-online"><i class="ti ti-shield-check"></i></span>
+              <div>
+                <span>正常</span>
+                <strong id="envMetricOk">0</strong>
+                <small>配置检查通过</small>
+              </div>
+            </div>
+            <div class="metric-card">
+              <span class="metric-icon metric-pending"><i class="ti ti-alert-triangle"></i></span>
+              <div>
+                <span>待处理</span>
+                <strong id="envMetricAttention">0</strong>
+                <small>失败或需确认</small>
+              </div>
+            </div>
+            <div class="metric-card wide">
+              <span class="metric-icon metric-check"><i class="ti ti-report-analytics"></i></span>
+              <div>
+                <span>最近报告</span>
+                <strong id="envMetricLast">无</strong>
+                <small>节点环境扫描</small>
+              </div>
+            </div>
+          </section>
+
+          <section id="environmentNodeGrid" class="environment-node-grid"></section>
+
+          <section class="environment-report card">
+            <div class="section-head">
+              <div>
+                <h2>专业检查报告</h2>
+                <p id="environmentReportSummary">检测完成后在这里展示节点环境报告。</p>
+              </div>
+            </div>
+            <div id="environmentReportBody" class="environment-report-body">
+              <div class="service-loading">暂无报告</div>
+            </div>
+          </section>
+        </section>
+
         <section id="settingsView" class="tab-panel hidden">
           <section class="services-panel card">
             <div class="section-head">
@@ -349,6 +412,6 @@
       </form>
     </dialog>
 
-    <script src="static/app.js?v=20260622-servicedot1"></script>
+    <script src="static/app.js?v=20260702-envreport1"></script>
   </body>
 </html>

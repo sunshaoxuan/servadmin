@@ -193,9 +193,11 @@ def test_static_and_index_are_not_cached():
         response = client.get("/")
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
-        assert "static/styles.css?v=20260622-servicedot1" in response.text
+        assert "static/styles.css?v=20260702-envreport1" in response.text
         assert 'id="detailCredential"' in response.text
         assert 'id="settingsView"' in response.text
+        assert 'id="environmentView"' in response.text
+        assert 'id="runAllEnvironmentBtn"' in response.text
 
         response = client.get("/static/styles.css")
         assert response.status_code == 200
@@ -240,6 +242,9 @@ def test_inspect_localhost_records_config_and_services():
         assert "个应用" in body["config_summary"]
         assert isinstance(body["config_report"], dict)
         assert "hostname" in body["config_report"]
+        assert "health_score" in body["config_report"]
+        assert "report_sections" in body["config_report"]
+        assert "network" in body["config_report"]
         assert isinstance(body["installed_apps"], list)
         assert isinstance(body["services"], list)
         if body["installed_apps"]:
@@ -252,6 +257,124 @@ def test_inspect_localhost_records_config_and_services():
         assert "inspect" in [row["action"] for row in response.json()]
     finally:
         os.unlink(db_path)
+
+
+def test_build_config_report_extracts_environment_sections():
+    from app.main import build_config_report
+
+    output = """
+__SECTION__hostname
+demo-node
+demo-node.example
+__SECTION__os
+PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"
+__SECTION__kernel
+Linux demo 6.1.0 x86_64 GNU/Linux
+__SECTION__runtime
+virtualization=kvm
+uptime=up 2 days
+load_average=0.01 0.02 0.03
+processes=101
+active_services=18
+locale=C.UTF-8
+timezone=UTC +0000
+__SECTION__cpu
+count=4
+architecture=x86_64
+model=Example CPU
+__SECTION__memory
+memory_total=8.0Gi
+memory_used=2.0Gi
+memory_available=5.0Gi
+__SECTION__disk
+/dev/vda1 40G 10G 30G 25% /
+__SECTION__network
+addresses=192.0.2.10 2001:db8::10
+eth0 UP 192.0.2.10/24
+default via 192.0.2.1 dev eth0
+dns=1.1.1.1
+__SECTION__tcp
+congestion_control=bbr
+qdisc=fq
+tcp_rmem=4096 87380 6291456
+tcp_wmem=4096 16384 4194304
+__SECTION__apps
+nginx\t1.24.0
+python3\t3.11
+__SECTION__services
+nginx.service\trunning\tNginx
+__SECTION__ports
+LISTEN 0 511 0.0.0.0:80 0.0.0.0:* users:(("nginx",pid=1,fd=6))
+"""
+
+    status, summary, report, apps, services = build_config_report(output)
+
+    assert status == "ok"
+    assert "2 个应用" in summary
+    assert "CPU 4 核" in summary
+    assert report["os_name"] == "Debian GNU/Linux 12 (bookworm)"
+    assert report["runtime"]["virtualization"] == "kvm"
+    assert report["cpu"]["model"] == "Example CPU"
+    assert report["memory_detail"]["memory_total"] == "8.0Gi"
+    assert report["network"]["addresses"] == ["192.0.2.10", "2001:db8::10"]
+    assert report["network"]["tcp"]["congestion_control"] == "bbr"
+    assert report["external_service_count"] == 1
+    assert report["health_score"] == 100
+    assert apps[0]["category"] == "custom"
+    assert any(service["external"] for service in services)
+
+
+def test_remote_key_inspection_runs_environment_script_on_selected_host(monkeypatch):
+    from app import main
+
+    calls = []
+
+    class DummyCompleted:
+        returncode = 0
+        stdout = """
+__SECTION__hostname
+remote-node
+__SECTION__kernel
+Linux remote-node 6.1.0 x86_64 GNU/Linux
+"""
+        stderr = ""
+
+    def fake_run(command, capture_output, text, timeout):
+        calls.append(
+            {
+                "command": command,
+                "capture_output": capture_output,
+                "text": text,
+                "timeout": timeout,
+            }
+        )
+        return DummyCompleted()
+
+    row = {
+        "hostname": "remote-node.example",
+        "ipv4": "198.51.100.20",
+        "ssh_host": "192.0.2.55",
+        "ssh_port": 3022,
+        "auth_type": "key",
+        "login_user": "ops",
+        "ssh_key_path": "/etc/server-desk/ssh/id_ed25519",
+        "ssh_options": "-o ProxyJump=bastion.example",
+    }
+
+    monkeypatch.setattr(main.subprocess, "run", fake_run)
+
+    status, _summary, report, _apps, _services = main.run_server_inspection(row)
+
+    assert status == "ok"
+    assert report["hostname"] == "remote-node"
+    assert len(calls) == 1
+    command = calls[0]["command"]
+    assert command[0] == "ssh"
+    assert "-p" in command
+    assert "3022" in command
+    assert "ops@192.0.2.55" in command
+    assert command[-1] == main.INSPECTION_SCRIPT
+    assert calls[0]["timeout"] == 20
 
 
 def test_services_status_requires_login_and_returns_shape():

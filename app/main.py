@@ -268,12 +268,47 @@ echo "__SECTION__os"
 (cat /etc/os-release 2>/dev/null || true) | sed -n '1,12p'
 echo "__SECTION__kernel"
 uname -a 2>/dev/null || true
+echo "__SECTION__runtime"
+printf 'virtualization=%s\n' "$(systemd-detect-virt 2>/dev/null || true)"
+printf 'uptime=%s\n' "$(uptime -p 2>/dev/null || true)"
+printf 'load_average=%s\n' "$(cut -d ' ' -f 1-3 /proc/loadavg 2>/dev/null || uptime 2>/dev/null | sed 's/.*load average: //')"
+printf 'processes=%s\n' "$(ps -e --no-headers 2>/dev/null | wc -l | tr -d ' ' || true)"
+printf 'logged_users=%s\n' "$(who 2>/dev/null | wc -l | tr -d ' ' || true)"
+printf 'active_services=%s\n' "$(systemctl list-units --type=service --state=running --no-legend --no-pager 2>/dev/null | wc -l | tr -d ' ' || true)"
+printf 'locale=%s\n' "${LANG:-}"
+printf 'timezone=%s\n' "$(date '+%Z %z' 2>/dev/null || true)"
 echo "__SECTION__cpu"
-(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo "") | head -1
+printf 'count=%s\n' "$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo "")"
+printf 'architecture=%s\n' "$(uname -m 2>/dev/null || true)"
+if command -v lscpu >/dev/null 2>&1; then
+  lscpu 2>/dev/null | awk -F: '
+    /^Model name:/ {gsub(/^[ \t]+/, "", $2); print "model=" $2}
+    /^Vendor ID:/ {gsub(/^[ \t]+/, "", $2); print "vendor=" $2}
+    /^Socket\(s\):/ {gsub(/^[ \t]+/, "", $2); print "sockets=" $2}
+    /^Core\(s\) per socket:/ {gsub(/^[ \t]+/, "", $2); print "cores_per_socket=" $2}
+    /^Thread\(s\) per core:/ {gsub(/^[ \t]+/, "", $2); print "threads_per_core=" $2}
+  ' | head -8
+fi
 echo "__SECTION__memory"
-(awk '/MemTotal/ {print $2 " kB"}' /proc/meminfo 2>/dev/null || sysctl -n hw.memsize 2>/dev/null || echo "") | head -1
+if command -v free >/dev/null 2>&1; then
+  free -h 2>/dev/null | awk '/^Mem:/ {print "memory_total=" $2; print "memory_used=" $3; print "memory_available=" $7}'
+fi
+awk '/MemTotal/ {print "mem_total_kb=" $2 " kB"} /MemAvailable/ {print "mem_available_kb=" $2 " kB"}' /proc/meminfo 2>/dev/null || true
 echo "__SECTION__disk"
 df -hP / 2>/dev/null | tail -1 || true
+df -hP -x tmpfs -x devtmpfs 2>/dev/null | head -8 || true
+echo "__SECTION__network"
+printf 'addresses=%s\n' "$(hostname -I 2>/dev/null | sed 's/[[:space:]]*$//')"
+if command -v ip >/dev/null 2>&1; then
+  ip -brief address show 2>/dev/null | head -20
+  ip route show default 2>/dev/null | head -5
+fi
+awk '/^nameserver/ {print "dns=" $2}' /etc/resolv.conf 2>/dev/null | head -4 || true
+echo "__SECTION__tcp"
+printf 'congestion_control=%s\n' "$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || true)"
+printf 'qdisc=%s\n' "$(sysctl -n net.core.default_qdisc 2>/dev/null || true)"
+printf 'tcp_rmem=%s\n' "$(cat /proc/sys/net/ipv4/tcp_rmem 2>/dev/null || true)"
+printf 'tcp_wmem=%s\n' "$(cat /proc/sys/net/ipv4/tcp_wmem 2>/dev/null || true)"
 echo "__SECTION__apps"
 if command -v dpkg-query >/dev/null 2>&1; then
   dpkg-query -W -f='${binary:Package}\t${Version}\n' 2>/dev/null | head -80
@@ -307,6 +342,30 @@ def split_sections(output: str) -> dict[str, list[str]]:
         elif current:
             sections[current].append(line)
     return sections
+
+
+def first_nonempty(lines: list[str]) -> str:
+    return next((line.strip() for line in lines if line.strip()), "")
+
+
+def parse_key_values(lines: list[str]) -> dict[str, str]:
+    data: dict[str, str] = {}
+    for line in lines:
+        clean = line.strip()
+        if not clean or "=" not in clean:
+            continue
+        key, value = clean.split("=", 1)
+        data[key.strip()] = value.strip()
+    return data
+
+
+def parse_os_name(lines: list[str]) -> str:
+    data = parse_key_values(lines)
+    return data.get("PRETTY_NAME", "").strip('"') or first_nonempty(lines)
+
+
+def report_lines(lines: list[str], limit: int = 24) -> list[str]:
+    return [line.rstrip() for line in lines if line.strip()][:limit]
 
 
 def parse_apps(lines: list[str]) -> list[dict[str, str]]:
@@ -498,17 +557,62 @@ def build_config_report(output: str) -> tuple[str, str, dict[str, Any], list[dic
     apps = parse_apps(sections.get("apps", []))
     services = parse_services(sections.get("services", []), sections.get("ports", []))
     hostname_lines = [line.strip() for line in sections.get("hostname", []) if line.strip()]
+    runtime = parse_key_values(sections.get("runtime", []))
+    cpu = parse_key_values(sections.get("cpu", []))
+    memory = parse_key_values(sections.get("memory", []))
+    network_lines = report_lines(sections.get("network", []), 30)
+    tcp = parse_key_values(sections.get("tcp", []))
+    disk_lines = report_lines(sections.get("disk", []), 12)
+    external_services = [service for service in services if service.get("external")]
+    health_score = 100
+    if not first_nonempty(sections.get("kernel", [])):
+        health_score -= 30
+    if not cpu.get("count"):
+        health_score -= 10
+    if not memory:
+        health_score -= 10
+    if not disk_lines:
+        health_score -= 10
+    if not network_lines:
+        health_score -= 10
+    health_score = max(0, health_score)
     report = {
         "hostname": hostname_lines[0] if hostname_lines else "",
         "hostname_fqdn": hostname_lines[1] if len(hostname_lines) > 1 else "",
         "os": sections.get("os", []),
+        "os_name": parse_os_name(sections.get("os", [])),
         "kernel": "\n".join(sections.get("kernel", [])).strip(),
-        "cpu_count": "\n".join(sections.get("cpu", [])).strip(),
-        "memory": "\n".join(sections.get("memory", [])).strip(),
-        "disk_root": "\n".join(sections.get("disk", [])).strip(),
+        "runtime": runtime,
+        "cpu": cpu,
+        "cpu_count": cpu.get("count", first_nonempty(sections.get("cpu", []))),
+        "memory": memory.get("memory_total") or memory.get("mem_total_kb") or first_nonempty(sections.get("memory", [])),
+        "memory_detail": memory,
+        "disk_root": disk_lines[0] if disk_lines else "",
+        "disks": disk_lines,
+        "network": {
+            "lines": network_lines,
+            "addresses": network_lines[0].replace("addresses=", "").split() if network_lines and network_lines[0].startswith("addresses=") else [],
+            "tcp": tcp,
+        },
+        "external_service_count": len(external_services),
+        "health_score": health_score,
+        "report_sections": {
+            "runtime": report_lines(sections.get("runtime", [])),
+            "cpu": report_lines(sections.get("cpu", [])),
+            "memory": report_lines(sections.get("memory", [])),
+            "disk": disk_lines,
+            "network": network_lines,
+            "tcp": report_lines(sections.get("tcp", [])),
+            "ports": report_lines(sections.get("ports", []), 30),
+        },
     }
     status = "ok" if report["kernel"] else "warning"
-    summary = f"{len(apps)} 个应用，{len(services)} 个服务"
+    summary_parts = [f"{len(apps)} 个应用", f"{len(services)} 个服务"]
+    if report["cpu_count"]:
+        summary_parts.append(f"CPU {report['cpu_count']} 核")
+    if report["memory"]:
+        summary_parts.append(f"内存 {report['memory']}")
+    summary = "，".join(summary_parts)
     return status, summary, report, apps, services
 
 
@@ -517,10 +621,27 @@ def fallback_local_config_report() -> tuple[str, str, dict[str, Any], list[dict[
         "hostname": socket.gethostname(),
         "hostname_fqdn": socket.getfqdn(),
         "os": [platform.platform()],
+        "os_name": platform.platform(),
         "kernel": platform.platform(),
+        "runtime": {},
+        "cpu": {"count": str(os.cpu_count() or ""), "architecture": platform.machine()},
         "cpu_count": str(os.cpu_count() or ""),
         "memory": "",
+        "memory_detail": {},
         "disk_root": "",
+        "disks": [],
+        "network": {"lines": [], "addresses": [], "tcp": {}},
+        "external_service_count": 0,
+        "health_score": 60,
+        "report_sections": {
+            "runtime": [],
+            "cpu": [],
+            "memory": [],
+            "disk": [],
+            "network": [],
+            "tcp": [],
+            "ports": [],
+        },
     }
     return "warning", "0 个应用，0 个服务", report, [], []
 
@@ -599,7 +720,7 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="Server Admin App", version="0.1.1", lifespan=lifespan)
+app = FastAPI(title="Server Admin App", version="0.1.2", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
 
