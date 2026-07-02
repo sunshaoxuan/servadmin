@@ -68,6 +68,7 @@ def test_login_create_reveal_and_audit():
         assert body["has_panel_password"] is True
         assert "panel_password_encrypted" not in body
         assert body["is_starred"] is True
+        assert body["is_retired"] is False
 
         response = client.get(f"/api/servers/{body['id']}/credential")
         assert response.status_code == 200
@@ -193,15 +194,61 @@ def test_static_and_index_are_not_cached():
         response = client.get("/")
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
-        assert "static/styles.css?v=20260702-envreport1" in response.text
+        assert "static/styles.css?v=20260702-detailenv1" in response.text
         assert 'id="detailCredential"' in response.text
         assert 'id="settingsView"' in response.text
-        assert 'id="environmentView"' in response.text
-        assert 'id="runAllEnvironmentBtn"' in response.text
+        assert 'id="showRetiredToggle"' in response.text
+        assert 'id="environmentDetailReport"' in response.text
+        assert 'data-detail-tab="environment"' in response.text
+        assert 'id="is_retired"' in response.text
+        assert 'id="environmentView"' not in response.text
+        assert 'id="runAllEnvironmentBtn"' not in response.text
 
         response = client.get("/static/styles.css")
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
+    finally:
+        os.unlink(db_path)
+
+
+def test_retired_servers_cannot_run_checks():
+    client, db_path = make_client()
+    try:
+        response = client.post("/api/login", json={"username": "admin", "password": "admin-pass"})
+        assert response.status_code == 200
+        response = client.post(
+            "/api/servers",
+            json={
+                "name": "Retired Host",
+                "hostname": "retired-host.local",
+                "ipv4": "192.0.2.44",
+                "ipv6": "",
+                "provider": "Test",
+                "region": "Test",
+                "login_user": "root",
+                "auth_type": "key",
+                "ssh_host": "192.0.2.44",
+                "ssh_port": 22,
+                "ssh_key_path": "",
+                "ssh_options": "",
+                "service_code": "",
+                "is_retired": True,
+                "tags": [],
+                "notes": "",
+                "credential": "",
+            },
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["is_retired"] is True
+
+        response = client.post(f"/api/servers/{body['id']}/check")
+        assert response.status_code == 409
+        assert response.json()["detail"] == "server is retired"
+
+        response = client.post(f"/api/servers/{body['id']}/inspect")
+        assert response.status_code == 409
+        assert response.json()["detail"] == "server is retired"
     finally:
         os.unlink(db_path)
 
@@ -270,6 +317,10 @@ __SECTION__os
 PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"
 __SECTION__kernel
 Linux demo 6.1.0 x86_64 GNU/Linux
+__SECTION__board
+system_vendor=Example Vendor
+product_name=Example Product
+bios_version=1.2.3
 __SECTION__runtime
 virtualization=kvm
 uptime=up 2 days
@@ -282,22 +333,32 @@ __SECTION__cpu
 count=4
 architecture=x86_64
 model=Example CPU
+__SECTION__gpu
+00:02.0 VGA compatible controller: Example GPU
 __SECTION__memory
 memory_total=8.0Gi
 memory_used=2.0Gi
 memory_available=5.0Gi
 __SECTION__disk
 /dev/vda1 40G 10G 30G 25% /
+__SECTION__block_devices
+vda disk 40G ExampleDisk
 __SECTION__network
 addresses=192.0.2.10 2001:db8::10
 eth0 UP 192.0.2.10/24
 default via 192.0.2.1 dev eth0
 dns=1.1.1.1
+__SECTION__public_ip
+ipv4=198.51.100.10
+ipv6=2001:db8::20
 __SECTION__tcp
 congestion_control=bbr
 qdisc=fq
 tcp_rmem=4096 87380 6291456
 tcp_wmem=4096 16384 4194304
+__SECTION__network_quality
+cloudflare http=200 dns=0.001 connect=0.010 tls=0.020 total=0.050 ip=104.16.1.1
+ping_1_1_1_1=rtt min/avg/max/mdev = 10.1/10.2/10.3/0.1 ms
 __SECTION__apps
 nginx\t1.24.0
 python3\t3.11
@@ -314,9 +375,14 @@ LISTEN 0 511 0.0.0.0:80 0.0.0.0:* users:(("nginx",pid=1,fd=6))
     assert "CPU 4 核" in summary
     assert report["os_name"] == "Debian GNU/Linux 12 (bookworm)"
     assert report["runtime"]["virtualization"] == "kvm"
+    assert report["board"]["system_vendor"] == "Example Vendor"
     assert report["cpu"]["model"] == "Example CPU"
+    assert report["gpu"] == ["00:02.0 VGA compatible controller: Example GPU"]
     assert report["memory_detail"]["memory_total"] == "8.0Gi"
+    assert report["block_devices"] == ["vda disk 40G ExampleDisk"]
     assert report["network"]["addresses"] == ["192.0.2.10", "2001:db8::10"]
+    assert report["network"]["public_ip"]["ipv4"] == "198.51.100.10"
+    assert report["network"]["quality"][0].startswith("cloudflare http=200")
     assert report["network"]["tcp"]["congestion_control"] == "bbr"
     assert report["external_service_count"] == 1
     assert report["health_score"] == 100
@@ -374,7 +440,7 @@ Linux remote-node 6.1.0 x86_64 GNU/Linux
     assert "3022" in command
     assert "ops@192.0.2.55" in command
     assert command[-1] == main.INSPECTION_SCRIPT
-    assert calls[0]["timeout"] == 20
+    assert calls[0]["timeout"] == 45
 
 
 def test_services_status_requires_login_and_returns_shape():

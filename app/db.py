@@ -36,6 +36,7 @@ create table if not exists servers (
   panel_password_encrypted text,
   service_code text,
   is_starred integer not null default 0,
+  is_retired integer not null default 0,
   tags_json text not null default '[]',
   notes text,
   credential_encrypted text,
@@ -74,6 +75,7 @@ SERVER_MIGRATIONS = {
     "panel_username": "alter table servers add column panel_username text",
     "panel_password_encrypted": "alter table servers add column panel_password_encrypted text",
     "is_starred": "alter table servers add column is_starred integer not null default 0",
+    "is_retired": "alter table servers add column is_retired integer not null default 0",
     "config_status": "alter table servers add column config_status text not null default 'unknown'",
     "config_summary": "alter table servers add column config_summary text",
     "config_report_json": "alter table servers add column config_report_json text not null default '{}'",
@@ -108,6 +110,7 @@ def row_to_server(row: sqlite3.Row) -> dict[str, Any]:
     data = dict(row)
     data["tags"] = json.loads(data.pop("tags_json") or "[]")
     data["is_starred"] = bool(data.get("is_starred"))
+    data["is_retired"] = bool(data.get("is_retired"))
     data["config_report"] = json.loads(data.pop("config_report_json") or "{}")
     data["installed_apps"] = json.loads(data.pop("installed_apps_json") or "[]")
     data["services"] = json.loads(data.pop("services_json") or "[]")

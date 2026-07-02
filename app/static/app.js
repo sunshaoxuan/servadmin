@@ -10,8 +10,6 @@ const state = {
   connectionSecretRequests: {},
   activeTab: "servers",
   services: null,
-  environmentSelectedId: null,
-  environmentRunning: {},
 };
 
 const $ = (id) => document.getElementById(id);
@@ -45,18 +43,19 @@ function showLogin() {
 async function loadAll() {
   state.servers = await api("/api/servers");
   state.audit = await api("/api/audit");
-  if (!state.selectedId && state.servers.length) state.selectedId = state.servers[0].id;
-  if (state.selectedId && !state.servers.some((s) => s.id === state.selectedId)) state.selectedId = state.servers[0]?.id || null;
-  if (!state.environmentSelectedId && state.servers.length) state.environmentSelectedId = state.selectedId || state.servers[0].id;
-  if (state.environmentSelectedId && !state.servers.some((s) => s.id === state.environmentSelectedId)) state.environmentSelectedId = state.servers[0]?.id || null;
+  const rows = filteredServers();
+  if (!state.selectedId && rows.length) state.selectedId = rows[0].id;
+  if (state.selectedId && !rows.some((s) => s.id === state.selectedId)) state.selectedId = rows[0]?.id || null;
   render();
 }
 
 function filteredServers() {
   const q = $("searchBox").value.trim().toLowerCase();
-  if (!q) return state.servers;
-  return state.servers.filter((s) => {
-    return [s.name, s.hostname, s.ipv4, s.ipv6, s.login_user, s.provider, s.region, ...(s.tags || [])]
+  const includeRetired = Boolean($("showRetiredToggle")?.checked);
+  const rows = state.servers.filter((s) => includeRetired || !s.is_retired);
+  if (!q) return rows;
+  return rows.filter((s) => {
+    return [s.name, s.hostname, s.ipv4, s.ipv6, s.login_user, s.provider, s.region, s.is_retired ? "已失效" : "有效", ...(s.tags || [])]
       .filter(Boolean)
       .join(" ")
       .toLowerCase()
@@ -66,6 +65,12 @@ function filteredServers() {
 
 function render() {
   const rows = filteredServers();
+  if (!state.selectedId && rows.length) {
+    state.selectedId = rows[0].id;
+  }
+  if (state.selectedId && !rows.some((s) => s.id === state.selectedId)) {
+    state.selectedId = rows[0]?.id || null;
+  }
   $("serverRows").innerHTML = rows.length
     ? rows.map(rowHtml).join("")
     : `<tr><td colspan="7" class="text-secondary text-center py-5">暂无服务器</td></tr>`;
@@ -85,29 +90,33 @@ function render() {
       state.selectedId = server.id;
       if (el.dataset.rowAction === "edit") openForm(server);
       if (el.dataset.rowAction === "check") {
+        if (server.is_retired) return;
         await api(`/api/servers/${server.id}/check`, { method: "POST" });
         await loadAll();
       }
       if (el.dataset.rowAction === "inspect") {
+        if (server.is_retired) return;
         await api(`/api/servers/${server.id}/inspect`, { method: "POST" });
         await loadAll();
       }
     });
   });
 
-  const online = state.servers.filter((s) => s.last_status === "online").length;
-  const offline = state.servers.filter((s) => s.last_status === "offline").length;
-  const unknown = state.servers.filter((s) => s.last_status === "unknown").length;
-  const last = state.servers.map((s) => s.last_checked_at).filter(Boolean).sort().pop() || "";
-  const checked = state.servers.filter((s) => s.last_checked_at).length;
+  const activeServers = state.servers.filter((s) => !s.is_retired);
+  const retiredCount = state.servers.length - activeServers.length;
+  const online = activeServers.filter((s) => s.last_status === "online").length;
+  const offline = activeServers.filter((s) => s.last_status === "offline").length;
+  const unknown = activeServers.filter((s) => s.last_status === "unknown").length;
+  const last = activeServers.map((s) => s.last_checked_at).filter(Boolean).sort().pop() || "";
+  const checked = activeServers.filter((s) => s.last_checked_at).length;
 
-  $("metricTotal").textContent = state.servers.length;
+  $("metricTotal").textContent = activeServers.length;
   $("metricOnline").textContent = online;
   $("metricUnknown").textContent = unknown;
   $("metricOffline").textContent = `${offline} 台离线`;
   $("metricLast").textContent = last ? last.slice(0, 16) : "无";
   $("metricChecked").textContent = `${checked} 台有检查记录`;
-  $("summaryText").textContent = `${rows.length} 台可见，${online} 台在线`;
+  $("summaryText").textContent = `${rows.length} 台可见，${online} 台在线${retiredCount ? `，${retiredCount} 台已失效` : ""}`;
   $("tableCount").textContent = `${rows.length} 台可见`;
   $("assetFooterCount").textContent = `共 ${rows.length} 条`;
   $("summaryOnlineBadge").textContent = `${online} 台在线`;
@@ -115,7 +124,6 @@ function render() {
   renderDetail();
   renderAudit();
   renderAuditDrawer();
-  renderEnvironment();
 }
 
 function showTab(tab) {
@@ -124,18 +132,13 @@ function showTab(tab) {
     item.classList.toggle("active", item.dataset.tab === tab);
   });
   const serversVisible = tab === "servers" || tab === "audit";
-  const environment = tab === "environment";
   const settings = tab === "settings";
   $("serversView").classList.toggle("hidden", !serversVisible);
-  $("environmentView").classList.toggle("hidden", !environment);
   $("settingsView").classList.toggle("hidden", !settings);
   document.querySelector(".search-wrap").classList.toggle("hidden", !serversVisible);
+  $("retiredFilterLabel").classList.toggle("hidden", !serversVisible);
   $("addBtn").classList.toggle("hidden", !serversVisible);
-  $("pageTitle").textContent = environment ? "环境检测" : settings ? "设置" : "服务器管理";
-  if (environment) {
-    renderEnvironment();
-    return;
-  }
+  $("pageTitle").textContent = settings ? "设置" : "服务器管理";
   if (settings) {
     $("summaryText").textContent = "应用和服务状态";
     refreshServices();
@@ -149,13 +152,16 @@ function showTab(tab) {
 
 function rowHtml(s) {
   const active = s.id === state.selectedId ? "active" : "";
+  const retired = Boolean(s.is_retired);
   const serverStatus = s.last_status || "unknown";
   const configStatus = s.config_status || "unknown";
   const tags = (s.tags || []).slice(0, 3).map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join("");
+  const disabledAttr = retired ? 'disabled aria-disabled="true"' : "";
+  const disabledTitle = retired ? "已失效节点不可检测" : "";
   return `
-    <tr class="ops-row ${active}" data-id="${s.id}">
+    <tr class="ops-row ${active} ${retired ? "retired" : ""}" data-id="${s.id}">
       <td>
-        <span class="server-title">${statusDot(serverStatus, statusLabel(serverStatus))}${s.is_starred ? '<span class="server-star" title="重点生产机">★</span>' : ""}<span class="server-title-text">${escapeHtml(s.name)}</span></span>
+        <span class="server-title">${statusDot(retired ? "retired" : serverStatus, retired ? "已失效" : statusLabel(serverStatus))}${s.is_starred ? '<span class="server-star" title="重点生产机">★</span>' : ""}<span class="server-title-text">${escapeHtml(s.name)}</span>${retired ? '<span class="retired-badge">已失效</span>' : ""}</span>
         <span class="server-sub">${escapeHtml(s.provider || "未设置")}</span>
         <span class="tags">${tags}</span>
       </td>
@@ -167,7 +173,7 @@ function rowHtml(s) {
         <strong>${escapeHtml(s.login_user)}</strong>
         <span class="server-sub">${escapeHtml(authLabel(s.auth_type))}</span>
       </td>
-      <td data-label="状态">${statusPill(serverStatus, statusLabel(serverStatus))}</td>
+      <td data-label="状态">${retired ? statusPill("retired", "已失效") : statusPill(serverStatus, statusLabel(serverStatus))}</td>
       <td data-label="配置">
         ${statusPill(configStatus, configLabel(configStatus), "config")}
         <span class="server-sub">${escapeHtml(s.config_summary || "未检查")}</span>
@@ -175,8 +181,8 @@ function rowHtml(s) {
       <td data-label="最近检查"><span class="server-sub">${escapeHtml(s.last_checked_at ? s.last_checked_at.slice(0, 16) : "未检查")}</span></td>
       <td data-label="操作">
         <div class="row-actions">
-          <button class="btn btn-light btn-icon btn-sm" type="button" title="检查 SSH" data-row-action="check"><i class="ti ti-activity-heartbeat"></i></button>
-          <button class="btn btn-light btn-icon btn-sm" type="button" title="检查配置" data-row-action="inspect"><i class="ti ti-list-search"></i></button>
+          <button class="btn btn-light btn-icon btn-sm" type="button" title="${disabledTitle || "检查 SSH"}" data-row-action="check" ${disabledAttr}><i class="ti ti-activity-heartbeat"></i></button>
+          <button class="btn btn-light btn-icon btn-sm" type="button" title="${disabledTitle || "检查配置"}" data-row-action="inspect" ${disabledAttr}><i class="ti ti-list-search"></i></button>
           <button class="btn btn-light btn-icon btn-sm" type="button" title="编辑" data-row-action="edit"><i class="ti ti-pencil"></i></button>
         </div>
       </td>
@@ -196,8 +202,10 @@ function renderDetail() {
   $("detailPanel").classList.remove("hidden");
   $("detailName").textContent = s.name;
   $("detailHost").textContent = s.hostname;
-  $("detailStatus").innerHTML = `${statusDot(s.last_status || "unknown", statusLabel(s.last_status))}${escapeHtml(statusLabel(s.last_status))}`;
-  $("detailStatus").className = `status ${s.last_status || "unknown"} detail-mini-status`;
+  const detailState = s.is_retired ? "retired" : s.last_status || "unknown";
+  const detailLabel = s.is_retired ? "已失效" : statusLabel(s.last_status);
+  $("detailStatus").innerHTML = `${statusDot(detailState, detailLabel)}${escapeHtml(detailLabel)}`;
+  $("detailStatus").className = `status ${detailState} detail-mini-status`;
   renderDetailTabs();
   $("detailIpv4").textContent = s.ipv4 || "未设置";
   $("detailIpv6").textContent = s.ipv6 || "未设置";
@@ -213,6 +221,7 @@ function renderDetail() {
   $("detailServiceCode").textContent = s.service_code || "未设置";
   $("detailProviderRegion").textContent = [s.provider, s.region].filter(Boolean).join(" / ") || "未设置";
   $("detailTags").innerHTML = (s.tags || []).map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join("") || "未设置";
+  $("detailRetiredStatus").innerHTML = s.is_retired ? statusPill("retired", "已失效") : statusPill("online", "有效");
   $("detailNotes").textContent = s.notes || "无";
   $("detailCreated").textContent = formatDateTime(s.created_at);
   $("detailUpdated").textContent = formatDateTime(s.updated_at);
@@ -221,6 +230,12 @@ function renderDetail() {
   $("detailConfigStatusPanel").innerHTML = `${statusPill(s.config_status || "unknown", configLabel(s.config_status), "config")} ${escapeHtml(s.config_summary || "未检查")}`;
   $("detailConfigReport").innerHTML = configReportHtml(s.config_report || {});
   $("inspectionSummary").textContent = s.last_config_check_at ? `检查时间 ${formatDateTime(s.last_config_check_at)}` : "未检查";
+  $("environmentDetailSummary").textContent = s.last_config_check_at
+    ? `检查时间 ${formatDateTime(s.last_config_check_at)}`
+    : s.is_retired
+      ? "已失效节点保留历史报告"
+      : "未检查";
+  $("environmentDetailReport").innerHTML = environmentReportHtml(s);
   $("installedAppsCount").textContent = `${(s.installed_apps || []).length} 项`;
   $("runningServicesCount").textContent = `${(s.services || []).length} 项`;
   $("installedApps").innerHTML = listAppsHtml(s.installed_apps || []);
@@ -228,6 +243,11 @@ function renderDetail() {
   renderSshCommands(s);
   renderCredentialField(s);
   renderPanelPasswordField(s);
+  $("retiredNotice").classList.toggle("hidden", !s.is_retired);
+  for (const id of ["checkBtn", "inspectBtn"]) {
+    $(id).disabled = Boolean(s.is_retired);
+    $(id).title = s.is_retired ? "已失效节点不可检测" : "";
+  }
 }
 
 function renderDetailTabs() {
@@ -313,95 +333,13 @@ async function refreshServices() {
   }
 }
 
-function renderEnvironment() {
-  const checked = state.servers.filter((s) => s.last_config_check_at).length;
-  const ok = state.servers.filter((s) => s.config_status === "ok").length;
-  const attention = state.servers.filter((s) => ["warning", "error"].includes(s.config_status)).length;
-  const last = state.servers.map((s) => s.last_config_check_at).filter(Boolean).sort().pop() || "";
-  if (!state.environmentSelectedId && state.servers.length) state.environmentSelectedId = state.servers[0].id;
-  const selectedServer = state.servers.find((s) => s.id === state.environmentSelectedId) || state.servers[0] || null;
-  if (selectedServer) state.environmentSelectedId = selectedServer.id;
-
-  if (state.activeTab === "environment") {
-    $("summaryText").textContent = `${checked}/${state.servers.length} 台节点已生成环境报告`;
-  }
-  $("environmentSummary").textContent = state.servers.length
-    ? "按节点触发系统、资源、网络和服务检查。"
-    : "先新增服务器节点，再进行环境检测。";
-  $("envMetricTotal").textContent = state.servers.length;
-  $("envMetricChecked").textContent = `${checked} 台已检查`;
-  $("envMetricOk").textContent = ok;
-  $("envMetricAttention").textContent = attention;
-  $("envMetricLast").textContent = last ? last.slice(0, 16) : "无";
-  $("environmentNodeGrid").innerHTML = state.servers.length
-    ? state.servers.map(environmentNodeHtml).join("")
-    : `<div class="service-loading">暂无节点</div>`;
-  $("environmentReportSummary").textContent = selectedServer
-    ? `${selectedServer.name}，${formatDateTime(selectedServer.last_config_check_at)}`
-    : "检测完成后在这里展示节点环境报告。";
-  $("environmentReportBody").innerHTML = environmentReportHtml(selectedServer);
-}
-
-function environmentNodeHtml(server) {
-  const report = server.config_report || {};
-  const running = Boolean(state.environmentRunning[server.id]);
-  const selectedClass = server.id === state.environmentSelectedId ? "active" : "";
-  const osName = osDisplay(report);
-  const cpu = report.cpu_count || report.cpu?.count || "未记录";
-  const memory = report.memory || "未记录";
-  const score = Number.isFinite(report.health_score) ? report.health_score : 0;
-  return `
-    <article class="environment-node ${selectedClass}" data-env-id="${server.id}">
-      <div class="environment-node-top">
-        <div>
-          <strong>${escapeHtml(server.name)}</strong>
-          <span>${escapeHtml(server.hostname)}</span>
-        </div>
-        ${statusPill(server.config_status || "unknown", configLabel(server.config_status), "config")}
-      </div>
-      <div class="environment-node-score">
-        <span>${escapeHtml(String(score || "未评分"))}</span>
-        <small>环境评分</small>
-      </div>
-      <dl class="environment-node-facts">
-        <dt>系统</dt><dd>${escapeHtml(osName)}</dd>
-        <dt>CPU</dt><dd>${escapeHtml(cpu)}</dd>
-        <dt>内存</dt><dd>${escapeHtml(memory)}</dd>
-        <dt>检查</dt><dd>${escapeHtml(formatDateTime(server.last_config_check_at))}</dd>
-      </dl>
-      <div class="environment-node-actions">
-        <button class="btn btn-primary btn-sm" type="button" data-env-action="inspect" data-env-id="${server.id}" ${running ? "disabled" : ""}>
-          <i class="ti ti-list-search"></i>${running ? "检测中" : "检测"}
-        </button>
-        <button class="btn btn-light btn-sm" type="button" data-env-action="select" data-env-id="${server.id}">
-          <i class="ti ti-report"></i>查看报告
-        </button>
-      </div>
-    </article>`;
-}
-
-async function inspectEnvironmentNode(serverId) {
-  state.environmentSelectedId = serverId;
-  state.environmentRunning[serverId] = true;
-  renderEnvironment();
-  try {
-    await api(`/api/servers/${serverId}/inspect`, { method: "POST" });
-  } finally {
-    delete state.environmentRunning[serverId];
-  }
-  await loadAll();
-}
-
-async function inspectAllEnvironment() {
-  for (const server of state.servers) {
-    await inspectEnvironmentNode(server.id);
-  }
-}
-
 function environmentReportHtml(server) {
   if (!server) return `<div class="service-loading">暂无节点</div>`;
   const report = server.config_report || {};
   if (!server.last_config_check_at && server.config_status === "unknown") {
+    if (server.is_retired) {
+      return `<div class="service-loading">这台服务器已失效，没有可用历史报告。</div>`;
+    }
     return `<div class="service-loading">选择节点后点击检测生成环境报告。</div>`;
   }
   if (report.error) {
@@ -414,6 +352,7 @@ function environmentReportHtml(server) {
         ["容器/虚拟化", report.runtime?.virtualization || "未记录"],
         ["架构", report.cpu?.architecture || "未记录"],
         ["操作系统/内核", `${osDisplay(report)} ${report.kernel || ""}`.trim()],
+        ["主机名/FQDN", `${report.hostname || "未记录"} ${report.hostname_fqdn || ""}`.trim()],
         ["运行时间", report.runtime?.uptime || "未记录"],
         ["负载", report.runtime?.load_average || "未记录"],
         ["进程/服务", `${report.runtime?.processes || "?"} 进程，${report.runtime?.active_services || "?"} 活跃服务`],
@@ -423,21 +362,27 @@ function environmentReportHtml(server) {
     {
       title: "二、硬件资源",
       rows: [
+        ["主板/机型", boardSummary(report)],
+        ["BIOS", biosSummary(report)],
         ["CPU", report.cpu?.model || `${report.cpu_count || "未记录"} 核`],
         ["CPU 核心", report.cpu_count || "未记录"],
+        ["GPU/显示", lineSummary(report.gpu || [])],
         ["内存", memorySummary(report)],
         ["根分区", report.disk_root || "未记录"],
         ["磁盘列表", lineSummary(report.disks || [])],
+        ["块设备", lineSummary(report.block_devices || report.report_sections?.block_devices || [])],
       ],
     },
     {
       title: "三、网络策略",
       rows: [
         ["地址", lineSummary(report.network?.addresses || [])],
+        ["公网 IP", publicIpSummary(report)],
         ["TCP 拥塞控制", report.network?.tcp?.congestion_control || "未记录"],
         ["队列调度", report.network?.tcp?.qdisc || "未记录"],
         ["TCP 接收缓冲", report.network?.tcp?.tcp_rmem || "未记录"],
         ["TCP 发送缓冲", report.network?.tcp?.tcp_wmem || "未记录"],
+        ["网络质量", lineSummary(report.network?.quality || report.report_sections?.network_quality || [])],
         ["网络明细", lineSummary(report.report_sections?.network || [])],
       ],
     },
@@ -493,6 +438,7 @@ function openForm(server = null) {
   }
   $("ssh_port").value = server?.ssh_port || 22;
   $("is_starred").checked = Boolean(server?.is_starred);
+  $("is_retired").checked = Boolean(server?.is_retired);
   $("tags").value = (server?.tags || []).join(", ");
   $("panel_password").value = "";
   $("credential").value = "";
@@ -521,6 +467,7 @@ function payloadFromForm() {
     panel_password: $("panel_password").value,
     service_code: $("service_code").value.trim(),
     is_starred: $("is_starred").checked,
+    is_retired: $("is_retired").checked,
     tags: $("tags").value.split(",").map((x) => x.trim()).filter(Boolean),
     credential: $("credential").value,
     notes: $("notes").value.trim(),
@@ -703,6 +650,7 @@ function statusLabel(value) {
   return {
     online: "在线",
     offline: "离线",
+    retired: "已失效",
     unknown: "未检查",
   }[value || "unknown"] || value;
 }
@@ -776,6 +724,28 @@ function memorySummary(report) {
     return `${detail.memory_used || "?"} / ${detail.memory_total || "?"}，可用 ${detail.memory_available || "?"}`;
   }
   return report.memory || "未记录";
+}
+
+function boardSummary(report) {
+  const board = report.board || {};
+  return [
+    board.system_vendor || board.sys_vendor,
+    board.product_name,
+    board.board_name,
+  ].filter(Boolean).join(" / ") || "未记录";
+}
+
+function biosSummary(report) {
+  const board = report.board || {};
+  return [board.bios_version, board.bios_date].filter(Boolean).join(" / ") || "未记录";
+}
+
+function publicIpSummary(report) {
+  const publicIp = report.network?.public_ip || {};
+  return [
+    publicIp.ipv4 ? `IPv4 ${publicIp.ipv4}` : "",
+    publicIp.ipv6 ? `IPv6 ${publicIp.ipv6}` : "",
+  ].filter(Boolean).join(" / ") || "未记录";
 }
 
 function lineSummary(lines) {
@@ -902,6 +872,7 @@ $("refreshBtn").addEventListener("click", () => {
 $("addBtn").addEventListener("click", () => openForm());
 $("editBtn").addEventListener("click", () => openForm(selected()));
 $("searchBox").addEventListener("input", render);
+$("showRetiredToggle").addEventListener("change", render);
 $("detailTabs").addEventListener("click", (event) => {
   const button = event.target.closest("[data-detail-tab]");
   if (!button) return;
@@ -909,19 +880,6 @@ $("detailTabs").addEventListener("click", (event) => {
   renderDetailTabs();
 });
 $("refreshServicesBtn").addEventListener("click", refreshServices);
-$("runAllEnvironmentBtn").addEventListener("click", inspectAllEnvironment);
-$("environmentNodeGrid").addEventListener("click", async (event) => {
-  const actionButton = event.target.closest("[data-env-action]");
-  const node = event.target.closest("[data-env-id]");
-  const serverId = Number(actionButton?.dataset.envId || node?.dataset.envId);
-  if (!serverId) return;
-  if (actionButton?.dataset.envAction === "inspect") {
-    await inspectEnvironmentNode(serverId);
-    return;
-  }
-  state.environmentSelectedId = serverId;
-  renderEnvironment();
-});
 document.querySelectorAll(".nav-item[data-tab], .mobile-tab[data-tab]").forEach((item) => {
   item.addEventListener("click", () => showTab(item.dataset.tab || "servers"));
 });
@@ -967,14 +925,14 @@ $("deleteBtn").addEventListener("click", async () => {
 
 $("checkBtn").addEventListener("click", async () => {
   const s = selected();
-  if (!s) return;
+  if (!s || s.is_retired) return;
   await api(`/api/servers/${s.id}/check`, { method: "POST" });
   await loadAll();
 });
 
 $("inspectBtn").addEventListener("click", async () => {
   const s = selected();
-  if (!s) return;
+  if (!s || s.is_retired) return;
   await api(`/api/servers/${s.id}/inspect`, { method: "POST" });
   await loadAll();
 });

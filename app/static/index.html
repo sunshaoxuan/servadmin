@@ -7,7 +7,7 @@
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230f766e'/%3E%3Ctext x='32' y='39' font-size='22' text-anchor='middle' font-family='Arial' font-weight='700' fill='white'%3ESD%3C/text%3E%3C/svg%3E" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0-beta20/dist/css/tabler.min.css" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.28.1/dist/tabler-icons.min.css" />
-    <link rel="stylesheet" href="static/styles.css?v=20260702-envreport1" />
+    <link rel="stylesheet" href="static/styles.css?v=20260702-detailenv1" />
   </head>
   <body>
     <main id="loginView" class="login-screen">
@@ -36,7 +36,6 @@
         <nav class="nav-list">
           <button class="nav-item active" data-tab="servers"><i class="ti ti-server-2"></i><span>服务器</span></button>
           <button class="nav-item" data-tab="audit"><i class="ti ti-activity"></i><span>审计</span></button>
-          <button class="nav-item" data-tab="environment"><i class="ti ti-clipboard-check"></i><span>环境检测</span></button>
           <button class="nav-item" data-tab="settings"><i class="ti ti-settings"></i><span>设置</span></button>
         </nav>
         <div class="sidebar-foot">
@@ -56,6 +55,10 @@
               <i class="ti ti-search"></i>
               <input id="searchBox" placeholder="搜索名称、IP、标签" />
             </div>
+            <label id="retiredFilterLabel" class="filter-toggle">
+              <input id="showRetiredToggle" type="checkbox" />
+              显示已失效
+            </label>
             <button id="refreshBtn" class="btn btn-light"><i class="ti ti-refresh"></i>刷新</button>
             <button id="addBtn" class="btn btn-primary"><i class="ti ti-plus"></i>新增服务器</button>
           </div>
@@ -64,7 +67,6 @@
         <nav class="mobile-tabs">
           <button class="mobile-tab active" data-tab="servers"><i class="ti ti-server-2"></i><span>服务器</span></button>
           <button class="mobile-tab" data-tab="audit"><i class="ti ti-activity"></i><span>审计</span></button>
-          <button class="mobile-tab" data-tab="environment"><i class="ti ti-clipboard-check"></i><span>环境</span></button>
           <button class="mobile-tab" data-tab="settings"><i class="ti ti-settings"></i><span>设置</span></button>
         </nav>
 
@@ -160,6 +162,7 @@
                   <button class="active" type="button" data-detail-tab="overview">概览</button>
                   <button type="button" data-detail-tab="ssh">连接</button>
                   <button type="button" data-detail-tab="config">配置</button>
+                  <button type="button" data-detail-tab="environment">环境检测</button>
                   <button type="button" data-detail-tab="apps">应用</button>
                   <button type="button" data-detail-tab="services">服务</button>
                   <button type="button" data-detail-tab="notes">备注</button>
@@ -172,6 +175,7 @@
                     <dt>服务代码</dt><dd id="detailServiceCode"></dd>
                     <dt>供应商</dt><dd id="detailProviderRegion"></dd>
                     <dt>标签</dt><dd id="detailTags"></dd>
+                    <dt>生命周期</dt><dd id="detailRetiredStatus"></dd>
                     <dt>创建时间</dt><dd id="detailCreated"></dd>
                     <dt>更新时间</dt><dd id="detailUpdated"></dd>
                     <dt>最后检查</dt><dd id="detailCheckedAt"></dd>
@@ -241,6 +245,16 @@
                   </dl>
                 </section>
 
+                <section class="detail-tab-panel hidden" data-tab-panel="environment">
+                  <div class="inspection-head">
+                    <h3>环境质量体检报告</h3>
+                    <span id="environmentDetailSummary">未检查</span>
+                  </div>
+                  <div id="environmentDetailReport" class="environment-report-body">
+                    <div class="service-loading">暂无报告</div>
+                  </div>
+                </section>
+
                 <section class="detail-tab-panel hidden" data-tab-panel="apps">
                   <div class="inspection-card flat">
                     <div class="inspection-head">
@@ -267,6 +281,7 @@
 
                 <div class="quick-card">
                   <h3>快速操作</h3>
+                  <div id="retiredNotice" class="retired-notice hidden">这台服务器已标记为失效，已停止 SSH 检查和环境检测。</div>
                   <div class="detail-actions">
                     <button id="checkBtn" class="btn btn-primary"><i class="ti ti-plug-connected"></i>检查 SSH</button>
                     <button id="inspectBtn" class="btn btn-light"><i class="ti ti-list-search"></i>检查配置</button>
@@ -292,67 +307,6 @@
             <button id="expandAuditBtn" class="audit-expand btn btn-light btn-icon" type="button" title="展开"><i class="ti ti-history"></i></button>
           </aside>
         </section>
-        </section>
-
-        <section id="environmentView" class="tab-panel hidden">
-          <section class="environment-hero">
-            <div>
-              <h2>环境检测报告</h2>
-              <p id="environmentSummary">选择节点后可触发检查并生成报告。</p>
-            </div>
-            <div class="environment-actions">
-              <button id="runAllEnvironmentBtn" class="btn btn-primary"><i class="ti ti-player-play"></i>检查全部节点</button>
-            </div>
-          </section>
-
-          <section class="environment-metrics">
-            <div class="metric-card">
-              <span class="metric-icon metric-total"><i class="ti ti-server-2"></i></span>
-              <div>
-                <span>节点</span>
-                <strong id="envMetricTotal">0</strong>
-                <small id="envMetricChecked">0 台已检查</small>
-              </div>
-            </div>
-            <div class="metric-card">
-              <span class="metric-icon metric-online"><i class="ti ti-shield-check"></i></span>
-              <div>
-                <span>正常</span>
-                <strong id="envMetricOk">0</strong>
-                <small>配置检查通过</small>
-              </div>
-            </div>
-            <div class="metric-card">
-              <span class="metric-icon metric-pending"><i class="ti ti-alert-triangle"></i></span>
-              <div>
-                <span>待处理</span>
-                <strong id="envMetricAttention">0</strong>
-                <small>失败或需确认</small>
-              </div>
-            </div>
-            <div class="metric-card wide">
-              <span class="metric-icon metric-check"><i class="ti ti-report-analytics"></i></span>
-              <div>
-                <span>最近报告</span>
-                <strong id="envMetricLast">无</strong>
-                <small>节点环境扫描</small>
-              </div>
-            </div>
-          </section>
-
-          <section id="environmentNodeGrid" class="environment-node-grid"></section>
-
-          <section class="environment-report card">
-            <div class="section-head">
-              <div>
-                <h2>专业检查报告</h2>
-                <p id="environmentReportSummary">检测完成后在这里展示节点环境报告。</p>
-              </div>
-            </div>
-            <div id="environmentReportBody" class="environment-report-body">
-              <div class="service-loading">暂无报告</div>
-            </div>
-          </section>
         </section>
 
         <section id="settingsView" class="tab-panel hidden">
@@ -399,6 +353,7 @@
           <label>服务代码<input id="service_code" /></label>
           <label>标签<input id="tags" placeholder="prod, tokyo, web" /></label>
           <label class="checkbox-field"><input id="is_starred" type="checkbox" /> 标星</label>
+          <label class="checkbox-field"><input id="is_retired" type="checkbox" /> 已失效</label>
         </div>
         <label>1Panel 密码<input id="panel_password" type="password" placeholder="编辑时留空表示不修改" /></label>
         <label>凭据<input id="credential" type="password" placeholder="密码、密钥口令或需要加密保存的连接凭据，编辑时留空表示不修改" /></label>
@@ -412,6 +367,6 @@
       </form>
     </dialog>
 
-    <script src="static/app.js?v=20260702-envreport1"></script>
+    <script src="static/app.js?v=20260702-detailenv1"></script>
   </body>
 </html>

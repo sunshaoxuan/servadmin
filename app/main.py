@@ -65,6 +65,7 @@ class ServerPayload(BaseModel):
     panel_password: Optional[str] = ""
     service_code: Optional[str] = ""
     is_starred: bool = False
+    is_retired: bool = False
     tags: List[str] = Field(default_factory=list)
     notes: Optional[str] = ""
     credential: Optional[str] = ""
@@ -230,6 +231,11 @@ def audit(conn, actor: str, action: str, target_type: str, target_id: int | None
     conn.commit()
 
 
+def ensure_active_server(row) -> None:
+    if row["is_retired"]:
+        raise HTTPException(status_code=409, detail="server is retired")
+
+
 def ssh_target(row) -> str:
     return row["ssh_host"] or row["ipv4"] or row["hostname"]
 
@@ -268,6 +274,26 @@ echo "__SECTION__os"
 (cat /etc/os-release 2>/dev/null || true) | sed -n '1,12p'
 echo "__SECTION__kernel"
 uname -a 2>/dev/null || true
+echo "__SECTION__board"
+if command -v dmidecode >/dev/null 2>&1; then
+  dmidecode -t system -t baseboard -t bios 2>/dev/null | awk -F: '
+    /Manufacturer:/ {gsub(/^[ \t]+/, "", $2); if (!system_vendor) {system_vendor=$2}}
+    /Product Name:/ {gsub(/^[ \t]+/, "", $2); if (!product_name) {product_name=$2}}
+    /Version:/ {gsub(/^[ \t]+/, "", $2); if (!bios_version) {bios_version=$2}}
+    /Release Date:/ {gsub(/^[ \t]+/, "", $2); if (!bios_date) {bios_date=$2}}
+    END {
+      if (system_vendor) print "system_vendor=" system_vendor
+      if (product_name) print "product_name=" product_name
+      if (bios_version) print "bios_version=" bios_version
+      if (bios_date) print "bios_date=" bios_date
+    }'
+fi
+for path in /sys/class/dmi/id/sys_vendor /sys/class/dmi/id/product_name /sys/class/dmi/id/board_name /sys/class/dmi/id/bios_version; do
+  if [ -r "$path" ]; then
+    key="$(basename "$path")"
+    printf '%s=%s\n' "$key" "$(cat "$path" 2>/dev/null)"
+  fi
+done
 echo "__SECTION__runtime"
 printf 'virtualization=%s\n' "$(systemd-detect-virt 2>/dev/null || true)"
 printf 'uptime=%s\n' "$(uptime -p 2>/dev/null || true)"
@@ -289,6 +315,10 @@ if command -v lscpu >/dev/null 2>&1; then
     /^Thread\(s\) per core:/ {gsub(/^[ \t]+/, "", $2); print "threads_per_core=" $2}
   ' | head -8
 fi
+echo "__SECTION__gpu"
+if command -v lspci >/dev/null 2>&1; then
+  lspci 2>/dev/null | grep -Ei 'vga|3d|display' | head -12 || true
+fi
 echo "__SECTION__memory"
 if command -v free >/dev/null 2>&1; then
   free -h 2>/dev/null | awk '/^Mem:/ {print "memory_total=" $2; print "memory_used=" $3; print "memory_available=" $7}'
@@ -297,6 +327,10 @@ awk '/MemTotal/ {print "mem_total_kb=" $2 " kB"} /MemAvailable/ {print "mem_avai
 echo "__SECTION__disk"
 df -hP / 2>/dev/null | tail -1 || true
 df -hP -x tmpfs -x devtmpfs 2>/dev/null | head -8 || true
+echo "__SECTION__block_devices"
+if command -v lsblk >/dev/null 2>&1; then
+  lsblk -o NAME,TYPE,SIZE,MODEL,MOUNTPOINT -e 7,11 -n 2>/dev/null | head -40
+fi
 echo "__SECTION__network"
 printf 'addresses=%s\n' "$(hostname -I 2>/dev/null | sed 's/[[:space:]]*$//')"
 if command -v ip >/dev/null 2>&1; then
@@ -304,11 +338,28 @@ if command -v ip >/dev/null 2>&1; then
   ip route show default 2>/dev/null | head -5
 fi
 awk '/^nameserver/ {print "dns=" $2}' /etc/resolv.conf 2>/dev/null | head -4 || true
+echo "__SECTION__public_ip"
+if command -v curl >/dev/null 2>&1; then
+  printf 'ipv4=%s\n' "$(curl -4 -fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)"
+  printf 'ipv6=%s\n' "$(curl -6 -fsS --max-time 5 https://api64.ipify.org 2>/dev/null || true)"
+fi
 echo "__SECTION__tcp"
 printf 'congestion_control=%s\n' "$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || true)"
 printf 'qdisc=%s\n' "$(sysctl -n net.core.default_qdisc 2>/dev/null || true)"
 printf 'tcp_rmem=%s\n' "$(cat /proc/sys/net/ipv4/tcp_rmem 2>/dev/null || true)"
 printf 'tcp_wmem=%s\n' "$(cat /proc/sys/net/ipv4/tcp_wmem 2>/dev/null || true)"
+echo "__SECTION__network_quality"
+if command -v curl >/dev/null 2>&1; then
+  for target in "cloudflare=https://www.cloudflare.com/cdn-cgi/trace" "google=https://www.google.com/generate_204" "microsoft=https://www.microsoft.com"; do
+    name="${target%%=*}"
+    url="${target#*=}"
+    curl -o /dev/null -fsS --max-time 6 -w "${name} http=%{http_code} dns=%{time_namelookup} connect=%{time_connect} tls=%{time_appconnect} total=%{time_total} ip=%{remote_ip}\n" "$url" 2>/dev/null || printf '%s error=unreachable\n' "$name"
+  done
+fi
+if command -v ping >/dev/null 2>&1; then
+  ping -c 3 -W 2 1.1.1.1 2>/dev/null | tail -2 | sed 's/^/ping_1_1_1_1=/' || true
+  ping -c 3 -W 2 8.8.8.8 2>/dev/null | tail -2 | sed 's/^/ping_8_8_8_8=/' || true
+fi
 echo "__SECTION__apps"
 if command -v dpkg-query >/dev/null 2>&1; then
   dpkg-query -W -f='${binary:Package}\t${Version}\n' 2>/dev/null | head -80
@@ -557,12 +608,17 @@ def build_config_report(output: str) -> tuple[str, str, dict[str, Any], list[dic
     apps = parse_apps(sections.get("apps", []))
     services = parse_services(sections.get("services", []), sections.get("ports", []))
     hostname_lines = [line.strip() for line in sections.get("hostname", []) if line.strip()]
+    board = parse_key_values(sections.get("board", []))
     runtime = parse_key_values(sections.get("runtime", []))
     cpu = parse_key_values(sections.get("cpu", []))
+    gpu = report_lines(sections.get("gpu", []), 12)
     memory = parse_key_values(sections.get("memory", []))
     network_lines = report_lines(sections.get("network", []), 30)
+    public_ip = parse_key_values(sections.get("public_ip", []))
+    network_quality = report_lines(sections.get("network_quality", []), 40)
     tcp = parse_key_values(sections.get("tcp", []))
     disk_lines = report_lines(sections.get("disk", []), 12)
+    block_devices = report_lines(sections.get("block_devices", []), 40)
     external_services = [service for service in services if service.get("external")]
     health_score = 100
     if not first_nonempty(sections.get("kernel", [])):
@@ -582,26 +638,36 @@ def build_config_report(output: str) -> tuple[str, str, dict[str, Any], list[dic
         "os": sections.get("os", []),
         "os_name": parse_os_name(sections.get("os", [])),
         "kernel": "\n".join(sections.get("kernel", [])).strip(),
+        "board": board,
         "runtime": runtime,
         "cpu": cpu,
         "cpu_count": cpu.get("count", first_nonempty(sections.get("cpu", []))),
+        "gpu": gpu,
         "memory": memory.get("memory_total") or memory.get("mem_total_kb") or first_nonempty(sections.get("memory", [])),
         "memory_detail": memory,
         "disk_root": disk_lines[0] if disk_lines else "",
         "disks": disk_lines,
+        "block_devices": block_devices,
         "network": {
             "lines": network_lines,
             "addresses": network_lines[0].replace("addresses=", "").split() if network_lines and network_lines[0].startswith("addresses=") else [],
+            "public_ip": public_ip,
+            "quality": network_quality,
             "tcp": tcp,
         },
         "external_service_count": len(external_services),
         "health_score": health_score,
         "report_sections": {
             "runtime": report_lines(sections.get("runtime", [])),
+            "board": report_lines(sections.get("board", [])),
             "cpu": report_lines(sections.get("cpu", [])),
+            "gpu": gpu,
             "memory": report_lines(sections.get("memory", [])),
             "disk": disk_lines,
+            "block_devices": block_devices,
             "network": network_lines,
+            "public_ip": report_lines(sections.get("public_ip", [])),
+            "network_quality": network_quality,
             "tcp": report_lines(sections.get("tcp", [])),
             "ports": report_lines(sections.get("ports", []), 30),
         },
@@ -623,22 +689,30 @@ def fallback_local_config_report() -> tuple[str, str, dict[str, Any], list[dict[
         "os": [platform.platform()],
         "os_name": platform.platform(),
         "kernel": platform.platform(),
+        "board": {},
         "runtime": {},
         "cpu": {"count": str(os.cpu_count() or ""), "architecture": platform.machine()},
         "cpu_count": str(os.cpu_count() or ""),
+        "gpu": [],
         "memory": "",
         "memory_detail": {},
         "disk_root": "",
         "disks": [],
-        "network": {"lines": [], "addresses": [], "tcp": {}},
+        "block_devices": [],
+        "network": {"lines": [], "addresses": [], "public_ip": {}, "quality": [], "tcp": {}},
         "external_service_count": 0,
         "health_score": 60,
         "report_sections": {
             "runtime": [],
+            "board": [],
             "cpu": [],
+            "gpu": [],
             "memory": [],
             "disk": [],
+            "block_devices": [],
             "network": [],
+            "public_ip": [],
+            "network_quality": [],
             "tcp": [],
             "ports": [],
         },
@@ -663,7 +737,7 @@ def run_paramiko_inspection(row, password: str) -> tuple[str, str, dict[str, Any
             look_for_keys=False,
             allow_agent=False,
         )
-        _stdin, stdout, stderr = client.exec_command(INSPECTION_SCRIPT, timeout=20)
+        _stdin, stdout, stderr = client.exec_command(INSPECTION_SCRIPT, timeout=45)
         output = stdout.read().decode("utf-8", errors="replace")
         error = stderr.read().decode("utf-8", errors="replace")
         exit_code = stdout.channel.recv_exit_status()
@@ -685,7 +759,7 @@ def run_server_inspection(row, password: str = "") -> tuple[str, str, dict[str, 
         return run_paramiko_inspection(row, password)
     command = local_inspection_command(INSPECTION_SCRIPT) if is_local else ssh_command(row, INSPECTION_SCRIPT)
     try:
-        completed = subprocess.run(command, capture_output=True, text=True, timeout=20)
+        completed = subprocess.run(command, capture_output=True, text=True, timeout=45)
     except FileNotFoundError as exc:
         if is_local:
             return fallback_local_config_report()
@@ -720,7 +794,7 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="Server Admin App", version="0.1.2", lifespan=lifespan)
+app = FastAPI(title="Server Admin App", version="0.1.3", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
 
@@ -811,8 +885,8 @@ def create_server(payload: ServerPayload, user=Depends(current_user), conn=Depen
         """
         insert into servers(name, hostname, ipv4, ipv6, provider, region, login_user, auth_type,
           ssh_host, ssh_port, ssh_key_path, ssh_local_key_path, ssh_windows_key_path, ssh_options, panel_url, panel_username,
-          panel_password_encrypted, service_code, is_starred, tags_json, notes, credential_encrypted)
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          panel_password_encrypted, service_code, is_starred, is_retired, tags_json, notes, credential_encrypted)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             payload.name,
@@ -834,6 +908,7 @@ def create_server(payload: ServerPayload, user=Depends(current_user), conn=Depen
             c.encrypt(payload.panel_password),
             payload.service_code or "",
             1 if payload.is_starred else 0,
+            1 if payload.is_retired else 0,
             json.dumps(payload.tags),
             payload.notes or "",
             c.encrypt(payload.credential),
@@ -858,7 +933,7 @@ def update_server(server_id: int, payload: ServerPayload, user=Depends(current_u
         update servers set name = ?, hostname = ?, ipv4 = ?, ipv6 = ?, provider = ?, region = ?,
           login_user = ?, auth_type = ?, ssh_host = ?, ssh_port = ?, ssh_key_path = ?, ssh_local_key_path = ?,
           ssh_windows_key_path = ?, ssh_options = ?, panel_url = ?, panel_username = ?, panel_password_encrypted = ?,
-          service_code = ?, is_starred = ?, tags_json = ?, notes = ?,
+          service_code = ?, is_starred = ?, is_retired = ?, tags_json = ?, notes = ?,
           credential_encrypted = ?, updated_at = current_timestamp
         where id = ?
         """,
@@ -882,6 +957,7 @@ def update_server(server_id: int, payload: ServerPayload, user=Depends(current_u
             panel_password,
             payload.service_code or "",
             1 if payload.is_starred else 0,
+            1 if payload.is_retired else 0,
             json.dumps(payload.tags),
             payload.notes or "",
             credential,
@@ -907,9 +983,10 @@ def delete_server(server_id: int, user=Depends(current_user), conn=Depends(db)):
 
 @app.post("/api/servers/{server_id}/check")
 def check_server(server_id: int, user=Depends(current_user), conn=Depends(db)):
-    row = conn.execute("select hostname, ipv4, ssh_host, ssh_port from servers where id = ?", (server_id,)).fetchone()
+    row = conn.execute("select hostname, ipv4, ssh_host, ssh_port, is_retired from servers where id = ?", (server_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="server not found")
+    ensure_active_server(row)
     target = ssh_target(row)
     port = int(row["ssh_port"] or 22)
     started = time.perf_counter()
@@ -935,6 +1012,7 @@ def inspect_server(server_id: int, user=Depends(current_user), conn=Depends(db),
     row = conn.execute("select * from servers where id = ?", (server_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="server not found")
+    ensure_active_server(row)
     password = c.decrypt(row["credential_encrypted"]) if row["auth_type"] == "password" else ""
     status, summary, report, apps, services = run_server_inspection(row, password)
     actual_hostname = report.get("hostname") or row["hostname"]
