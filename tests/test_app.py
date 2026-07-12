@@ -394,6 +394,9 @@ def test_inspection_script_bounds_slow_inventory_commands():
     from app.main import INSPECTION_SCRIPT
 
     assert "run_timeout()" in INSPECTION_SCRIPT
+    assert 'timeout -k 1s "${seconds}s"' in INSPECTION_SCRIPT
+    assert "run_timeout 3 uptime -p" in INSPECTION_SCRIPT
+    assert "run_timeout 5 sh -c 'systemctl list-units" in INSPECTION_SCRIPT
     assert "dmidecode" not in INSPECTION_SCRIPT
     assert "run_timeout 10 dpkg-query" in INSPECTION_SCRIPT
     assert "run_timeout 10 systemctl list-units" in INSPECTION_SCRIPT

@@ -271,7 +271,7 @@ run_timeout() {
   seconds="$1"
   shift
   if command -v timeout >/dev/null 2>&1; then
-    timeout "$seconds" "$@"
+    timeout -k 1s "${seconds}s" "$@"
   else
     "$@"
   fi
@@ -285,12 +285,12 @@ echo "__SECTION__kernel"
 uname -a 2>/dev/null || true
 echo "__SECTION__board"
 echo "__SECTION__runtime"
-printf 'virtualization=%s\n' "$(systemd-detect-virt 2>/dev/null || true)"
-printf 'uptime=%s\n' "$(uptime -p 2>/dev/null || true)"
-printf 'load_average=%s\n' "$(cut -d ' ' -f 1-3 /proc/loadavg 2>/dev/null || uptime 2>/dev/null | sed 's/.*load average: //')"
-printf 'processes=%s\n' "$(ps -e --no-headers 2>/dev/null | wc -l | tr -d ' ' || true)"
-printf 'logged_users=%s\n' "$(who 2>/dev/null | wc -l | tr -d ' ' || true)"
-printf 'active_services=%s\n' "$(systemctl list-units --type=service --state=running --no-legend --no-pager 2>/dev/null | wc -l | tr -d ' ' || true)"
+printf 'virtualization=%s\n' "$(run_timeout 3 systemd-detect-virt 2>/dev/null || true)"
+printf 'uptime=%s\n' "$(run_timeout 3 uptime -p 2>/dev/null || true)"
+printf 'load_average=%s\n' "$(run_timeout 3 cut -d ' ' -f 1-3 /proc/loadavg 2>/dev/null || run_timeout 3 uptime 2>/dev/null | sed 's/.*load average: //')"
+printf 'processes=%s\n' "$(run_timeout 3 sh -c 'ps -e --no-headers 2>/dev/null | wc -l | tr -d " "' || true)"
+printf 'logged_users=%s\n' "$(run_timeout 3 sh -c 'who 2>/dev/null | wc -l | tr -d " "' || true)"
+printf 'active_services=%s\n' "$(run_timeout 5 sh -c 'systemctl list-units --type=service --state=running --no-legend --no-pager 2>/dev/null | wc -l | tr -d " "' || true)"
 printf 'locale=%s\n' "${LANG:-}"
 printf 'timezone=%s\n' "$(date '+%Z %z' 2>/dev/null || true)"
 echo "__SECTION__cpu"
