@@ -10,6 +10,7 @@ const state = {
   connectionSecretRequests: {},
   activeTab: "servers",
   services: null,
+  runningActions: {},
 };
 
 const $ = (id) => document.getElementById(id);
@@ -90,14 +91,12 @@ function render() {
       state.selectedId = server.id;
       if (el.dataset.rowAction === "edit") openForm(server);
       if (el.dataset.rowAction === "check") {
-        if (server.is_retired) return;
-        await api(`/api/servers/${server.id}/check`, { method: "POST" });
-        await loadAll();
+        if (server.is_retired || isServerBusy(server.id)) return;
+        await runServerAction(server.id, "check");
       }
       if (el.dataset.rowAction === "inspect") {
-        if (server.is_retired) return;
-        await api(`/api/servers/${server.id}/inspect`, { method: "POST" });
-        await loadAll();
+        if (server.is_retired || isServerBusy(server.id)) return;
+        await runServerAction(server.id, "inspect");
       }
     });
   });
@@ -153,11 +152,15 @@ function showTab(tab) {
 function rowHtml(s) {
   const active = s.id === state.selectedId ? "active" : "";
   const retired = Boolean(s.is_retired);
+  const checkRunning = isActionRunning(s.id, "check");
+  const inspectRunning = isActionRunning(s.id, "inspect");
+  const busy = checkRunning || inspectRunning;
   const serverStatus = s.last_status || "unknown";
   const configStatus = s.config_status || "unknown";
   const tags = (s.tags || []).slice(0, 3).map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join("");
-  const disabledAttr = retired ? 'disabled aria-disabled="true"' : "";
-  const disabledTitle = retired ? "已失效节点不可检测" : "";
+  const disabledAttr = retired || busy ? 'disabled aria-disabled="true"' : "";
+  const checkTitle = retired ? "已失效节点不可检测" : checkRunning ? "SSH 检查中" : inspectRunning ? "配置检查中" : "检查 SSH";
+  const inspectTitle = retired ? "已失效节点不可检测" : inspectRunning ? "配置检查中" : checkRunning ? "SSH 检查中" : "检查配置";
   return `
     <tr class="ops-row ${active} ${retired ? "retired" : ""}" data-id="${s.id}">
       <td>
@@ -181,8 +184,8 @@ function rowHtml(s) {
       <td data-label="最近检查"><span class="server-sub">${escapeHtml(s.last_checked_at ? s.last_checked_at.slice(0, 16) : "未检查")}</span></td>
       <td data-label="操作">
         <div class="row-actions">
-          <button class="btn btn-light btn-icon btn-sm" type="button" title="${disabledTitle || "检查 SSH"}" data-row-action="check" ${disabledAttr}><i class="ti ti-activity-heartbeat"></i></button>
-          <button class="btn btn-light btn-icon btn-sm" type="button" title="${disabledTitle || "检查配置"}" data-row-action="inspect" ${disabledAttr}><i class="ti ti-list-search"></i></button>
+          <button class="btn btn-light btn-icon btn-sm ${checkRunning ? "action-loading" : ""}" type="button" title="${checkTitle}" data-row-action="check" ${disabledAttr}>${actionIcon("check", checkRunning)}</button>
+          <button class="btn btn-light btn-icon btn-sm ${inspectRunning ? "action-loading" : ""}" type="button" title="${inspectTitle}" data-row-action="inspect" ${disabledAttr}>${actionIcon("inspect", inspectRunning)}</button>
           <button class="btn btn-light btn-icon btn-sm" type="button" title="编辑" data-row-action="edit"><i class="ti ti-pencil"></i></button>
         </div>
       </td>
@@ -244,10 +247,7 @@ function renderDetail() {
   renderCredentialField(s);
   renderPanelPasswordField(s);
   $("retiredNotice").classList.toggle("hidden", !s.is_retired);
-  for (const id of ["checkBtn", "inspectBtn"]) {
-    $(id).disabled = Boolean(s.is_retired);
-    $(id).title = s.is_retired ? "已失效节点不可检测" : "";
-  }
+  renderActionButtons(s);
 }
 
 function renderDetailTabs() {
@@ -257,6 +257,52 @@ function renderDetailTabs() {
   document.querySelectorAll("[data-tab-panel]").forEach((panel) => {
     panel.classList.toggle("hidden", panel.dataset.tabPanel !== state.activeDetailTab);
   });
+}
+
+function actionKey(serverId, action) {
+  return `${serverId}:${action}`;
+}
+
+function isActionRunning(serverId, action) {
+  return Boolean(state.runningActions[actionKey(serverId, action)]);
+}
+
+function isServerBusy(serverId) {
+  return isActionRunning(serverId, "check") || isActionRunning(serverId, "inspect");
+}
+
+function actionIcon(action, running) {
+  if (running) return '<i class="ti ti-loader-2 action-spinner" aria-hidden="true"></i>';
+  return action === "check" ? '<i class="ti ti-activity-heartbeat"></i>' : '<i class="ti ti-list-search"></i>';
+}
+
+function renderActionButtons(server) {
+  const checkRunning = isActionRunning(server.id, "check");
+  const inspectRunning = isActionRunning(server.id, "inspect");
+  const busy = checkRunning || inspectRunning;
+  const checkBtn = $("checkBtn");
+  const inspectBtn = $("inspectBtn");
+  checkBtn.disabled = Boolean(server.is_retired || busy);
+  inspectBtn.disabled = Boolean(server.is_retired || busy);
+  checkBtn.title = server.is_retired ? "已失效节点不可检测" : checkRunning ? "SSH 检查中" : inspectRunning ? "配置检查中" : "";
+  inspectBtn.title = server.is_retired ? "已失效节点不可检测" : inspectRunning ? "配置检查中" : checkRunning ? "SSH 检查中" : "";
+  checkBtn.classList.toggle("action-loading", checkRunning);
+  inspectBtn.classList.toggle("action-loading", inspectRunning);
+  checkBtn.innerHTML = `${actionIcon("check", checkRunning)}${checkRunning ? "检查中" : "检查 SSH"}`;
+  inspectBtn.innerHTML = `${actionIcon("inspect", inspectRunning)}${inspectRunning ? "检查中" : "检查配置"}`;
+}
+
+async function runServerAction(serverId, action) {
+  if (isServerBusy(serverId)) return;
+  state.runningActions[actionKey(serverId, action)] = true;
+  render();
+  try {
+    await api(`/api/servers/${serverId}/${action}`, { method: "POST" });
+    await loadAll();
+  } finally {
+    delete state.runningActions[actionKey(serverId, action)];
+    render();
+  }
 }
 
 function renderAudit() {
@@ -925,16 +971,14 @@ $("deleteBtn").addEventListener("click", async () => {
 
 $("checkBtn").addEventListener("click", async () => {
   const s = selected();
-  if (!s || s.is_retired) return;
-  await api(`/api/servers/${s.id}/check`, { method: "POST" });
-  await loadAll();
+  if (!s || s.is_retired || isServerBusy(s.id)) return;
+  await runServerAction(s.id, "check");
 });
 
 $("inspectBtn").addEventListener("click", async () => {
   const s = selected();
-  if (!s || s.is_retired) return;
-  await api(`/api/servers/${s.id}/inspect`, { method: "POST" });
-  await loadAll();
+  if (!s || s.is_retired || isServerBusy(s.id)) return;
+  await runServerAction(s.id, "inspect");
 });
 
 $("copySshUnixBtn").addEventListener("click", async () => {
