@@ -351,8 +351,10 @@ if command -v ping >/dev/null 2>&1; then
   ping -c 3 -W 2 8.8.8.8 2>/dev/null | tail -2 | sed 's/^/ping_8_8_8_8=/' || true
 fi
 echo "__SECTION__apps"
-if command -v dpkg-query >/dev/null 2>&1; then
-  run_timeout 10 dpkg-query -W -f='${binary:Package}\t${Version}\n' 2>/dev/null | head -80
+if [ -r /var/lib/dpkg/status ]; then
+  run_timeout 5 awk '/^Package:/{p=$2}/^Version:/{print p "\t" $2; c++; if(c>=80) exit}' /var/lib/dpkg/status 2>/dev/null
+elif command -v dpkg-query >/dev/null 2>&1; then
+  run_timeout 5 dpkg-query -W -f='${binary:Package}\t${Version}\n' 2>/dev/null | head -80
 elif command -v rpm >/dev/null 2>&1; then
   run_timeout 10 rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\n' 2>/dev/null | head -80
 elif command -v brew >/dev/null 2>&1; then
