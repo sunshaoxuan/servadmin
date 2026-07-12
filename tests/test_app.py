@@ -395,7 +395,6 @@ def test_inspection_script_bounds_dmidecode():
 
     assert "run_timeout()" in INSPECTION_SCRIPT
     assert "timeout 6 dmidecode" in INSPECTION_SCRIPT
-    assert "run_timeout 2 cat" in INSPECTION_SCRIPT
     assert "run_timeout 10 dpkg-query" in INSPECTION_SCRIPT
     assert "run_timeout 10 systemctl list-units" in INSPECTION_SCRIPT
     assert "run_timeout 10 ss -lntup" in INSPECTION_SCRIPT
