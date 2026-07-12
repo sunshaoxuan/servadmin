@@ -390,6 +390,44 @@ LISTEN 0 511 0.0.0.0:80 0.0.0.0:* users:(("nginx",pid=1,fd=6))
     assert any(service["external"] for service in services)
 
 
+def test_inspection_script_bounds_dmidecode():
+    from app.main import INSPECTION_SCRIPT
+
+    assert "timeout 6 dmidecode" in INSPECTION_SCRIPT
+
+
+def test_paramiko_inspection_reports_blank_timeout(monkeypatch):
+    from app import main
+
+    class DummyClient:
+        def set_missing_host_key_policy(self, _policy):
+            pass
+
+        def connect(self, **_kwargs):
+            raise TimeoutError()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(main.paramiko, "SSHClient", lambda: DummyClient())
+
+    row = {
+        "hostname": "timeout.example",
+        "ipv4": "192.0.2.60",
+        "ssh_host": "192.0.2.60",
+        "ssh_port": 22,
+        "login_user": "root",
+    }
+
+    status, summary, report, apps, services = main.run_paramiko_inspection(row, "secret")
+
+    assert status == "error"
+    assert summary == "TimeoutError"
+    assert report == {"error": "TimeoutError"}
+    assert apps == []
+    assert services == []
+
+
 def test_remote_key_inspection_runs_environment_script_on_selected_host(monkeypatch):
     from app import main
 

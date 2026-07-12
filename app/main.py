@@ -276,7 +276,11 @@ echo "__SECTION__kernel"
 uname -a 2>/dev/null || true
 echo "__SECTION__board"
 if command -v dmidecode >/dev/null 2>&1; then
-  dmidecode -t system -t baseboard -t bios 2>/dev/null | awk -F: '
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 6 dmidecode -t system -t baseboard -t bios 2>/dev/null
+  else
+    dmidecode -t system -t baseboard -t bios 2>/dev/null
+  fi | awk -F: '
     /Manufacturer:/ {gsub(/^[ \t]+/, "", $2); if (!system_vendor) {system_vendor=$2}}
     /Product Name:/ {gsub(/^[ \t]+/, "", $2); if (!product_name) {product_name=$2}}
     /Version:/ {gsub(/^[ \t]+/, "", $2); if (!bios_version) {bios_version=$2}}
@@ -742,12 +746,12 @@ def run_paramiko_inspection(row, password: str) -> tuple[str, str, dict[str, Any
         error = stderr.read().decode("utf-8", errors="replace")
         exit_code = stdout.channel.recv_exit_status()
     except Exception as exc:
-        detail = str(exc)[:500]
+        detail = str(exc).strip()[:500] or exc.__class__.__name__
         return "error", detail, {"error": detail}, [], []
     finally:
         client.close()
     if exit_code != 0:
-        detail = (error or output or "配置检查失败").strip()[:500]
+        detail = (error or output or "").strip()[:500] or "配置检查失败"
         return "error", detail, {"error": detail}, [], []
     return build_config_report(output)
 
@@ -763,10 +767,10 @@ def run_server_inspection(row, password: str = "") -> tuple[str, str, dict[str, 
     except FileNotFoundError as exc:
         if is_local:
             return fallback_local_config_report()
-        detail = str(exc)[:500]
+        detail = str(exc).strip()[:500] or exc.__class__.__name__
         return "error", detail, {"error": detail}, [], []
     if completed.returncode != 0:
-        detail = (completed.stderr or completed.stdout or "inspection failed").strip()[:500]
+        detail = (completed.stderr or completed.stdout or "").strip()[:500] or "inspection failed"
         return "error", detail, {"error": detail}, [], []
     return build_config_report(completed.stdout)
 
