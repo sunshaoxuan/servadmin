@@ -399,7 +399,7 @@ LISTEN 0 511 0.0.0.0:80 0.0.0.0:* users:(("nginx",pid=1,fd=6))
 
 
 def test_inspection_script_bounds_slow_inventory_commands():
-    from app.main import INSPECTION_SCRIPT
+    from app.main import INSPECTION_SCRIPT, PYTHON_INSPECTION_SCRIPT
 
     assert "run_timeout()" in INSPECTION_SCRIPT
     assert 'timeout -k 1s "${seconds}s"' in INSPECTION_SCRIPT
@@ -412,6 +412,9 @@ def test_inspection_script_bounds_slow_inventory_commands():
     assert "run_timeout 5 dpkg-query" in INSPECTION_SCRIPT
     assert "run_timeout 10 systemctl list-units" in INSPECTION_SCRIPT
     assert "run_timeout 10 ss -lntup" in INSPECTION_SCRIPT
+    assert 'section("network_quality")' in PYTHON_INSPECTION_SCRIPT
+    assert "/var/lib/dpkg/status" in PYTHON_INSPECTION_SCRIPT
+    compile(PYTHON_INSPECTION_SCRIPT, "<remote-inspection>", "exec")
 
 
 def test_paramiko_inspection_reports_blank_timeout(monkeypatch):

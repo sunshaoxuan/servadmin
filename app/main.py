@@ -9,6 +9,7 @@ import shlex
 import socket
 import subprocess
 import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, List, Optional
@@ -375,6 +376,206 @@ fi
 """
 
 
+PYTHON_INSPECTION_SCRIPT = r'''
+from __future__ import annotations
+
+import glob
+import os
+import platform
+import re
+import shutil
+import shlex
+import socket
+import subprocess
+from pathlib import Path
+
+
+def section(name: str) -> None:
+    print(f"__SECTION__{name}", flush=True)
+
+
+def run(command: str, timeout: float = 5) -> str:
+    try:
+        completed = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except Exception:
+        return ""
+    return completed.stdout.strip()
+
+
+def print_lines(text: str, limit: int = 24) -> None:
+    for line in text.splitlines()[:limit]:
+        clean = line.rstrip()
+        if clean:
+            print(clean)
+
+
+def read_lines(path: str, limit: int = 24) -> list[str]:
+    try:
+        return Path(path).read_text(errors="replace").splitlines()[:limit]
+    except Exception:
+        return []
+
+
+section("hostname")
+print(socket.gethostname())
+print(run("hostname -f 2>/dev/null", 3))
+
+section("os")
+for line in read_lines("/etc/os-release", 12):
+    print(line)
+
+section("kernel")
+print(run("uname -a 2>/dev/null", 3) or platform.platform())
+
+section("board")
+
+section("runtime")
+uptime_raw = ""
+try:
+    uptime_raw = Path("/proc/uptime").read_text(errors="replace").split()[0]
+except Exception:
+    pass
+print("virtualization=")
+print(f"uptime=up {uptime_raw} seconds" if uptime_raw else "uptime=")
+load_average = run("cut -d ' ' -f 1-3 /proc/loadavg 2>/dev/null", 3)
+print(f"load_average={load_average}")
+process_count = len(glob.glob("/proc/[0-9]*"))
+print(f"processes={process_count or ''}")
+logged_users = run("who 2>/dev/null | wc -l | tr -d ' '", 3)
+active_services = run("systemctl list-units --type=service --state=running --no-legend --no-pager 2>/dev/null | wc -l | tr -d ' '", 5)
+print(f"logged_users={logged_users}")
+print(f"active_services={active_services}")
+print(f"locale={os.environ.get('LANG', '')}")
+timezone = run("date '+%Z %z' 2>/dev/null", 3)
+print(f"timezone={timezone}")
+
+section("cpu")
+print(f"count={os.cpu_count() or ''}")
+print(f"architecture={platform.machine()}")
+cpuinfo = "\n".join(read_lines("/proc/cpuinfo", 400))
+model = re.search(r"^model name\s*:\s*(.+)$", cpuinfo, re.MULTILINE)
+vendor = re.search(r"^vendor_id\s*:\s*(.+)$", cpuinfo, re.MULTILINE)
+cpu_cores = re.search(r"^cpu cores\s*:\s*(.+)$", cpuinfo, re.MULTILINE)
+siblings = re.search(r"^siblings\s*:\s*(.+)$", cpuinfo, re.MULTILINE)
+if model:
+    print(f"model={model.group(1)}")
+if vendor:
+    print(f"vendor={vendor.group(1)}")
+if cpu_cores:
+    print(f"cores_per_socket={cpu_cores.group(1)}")
+if siblings and cpu_cores:
+    try:
+        threads = max(1, int(siblings.group(1)) // max(1, int(cpu_cores.group(1))))
+        print(f"threads_per_core={threads}")
+    except Exception:
+        pass
+print("sockets=1")
+
+section("gpu")
+if shutil.which("lspci"):
+    print_lines(run("lspci 2>/dev/null | grep -Ei 'vga|3d|display' | head -12", 5), 12)
+
+section("memory")
+meminfo = {}
+for line in read_lines("/proc/meminfo", 80):
+    if ":" in line:
+        key, value = line.split(":", 1)
+        meminfo[key] = value.strip()
+if meminfo.get("MemTotal"):
+    print(f"mem_total_kb={meminfo['MemTotal']}")
+if meminfo.get("MemAvailable"):
+    print(f"mem_available_kb={meminfo['MemAvailable']}")
+print_lines(run("free -h 2>/dev/null | awk '/^Mem:/ {print \"memory_total=\" $2; print \"memory_used=\" $3; print \"memory_available=\" $7}'", 5), 3)
+
+section("disk")
+print_lines(run("df -hP / 2>/dev/null | tail -1", 5), 1)
+print_lines(run("df -hP -x tmpfs -x devtmpfs 2>/dev/null | head -8", 5), 8)
+
+section("block_devices")
+if shutil.which("lsblk"):
+    print_lines(run("lsblk -o NAME,TYPE,SIZE,MODEL,MOUNTPOINT -e 7,11 -n 2>/dev/null | head -40", 5), 40)
+
+section("network")
+addresses = run("hostname -I 2>/dev/null | sed 's/[[:space:]]*$//'", 3)
+print(f"addresses={addresses}")
+if shutil.which("ip"):
+    print_lines(run("ip -brief address show 2>/dev/null | head -20", 5), 20)
+    print_lines(run("ip route show default 2>/dev/null | head -5", 5), 5)
+for line in read_lines("/etc/resolv.conf", 20):
+    if line.startswith("nameserver"):
+        parts = line.split()
+        if len(parts) > 1:
+            print(f"dns={parts[1]}")
+
+section("public_ip")
+if shutil.which("curl"):
+    print(f"ipv4={run('curl -4 -fsS --max-time 5 https://api.ipify.org 2>/dev/null', 7)}")
+    print(f"ipv6={run('curl -6 -fsS --max-time 5 https://api64.ipify.org 2>/dev/null', 7)}")
+
+section("tcp")
+print(f"congestion_control={run('sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null', 3)}")
+print(f"qdisc={run('sysctl -n net.core.default_qdisc 2>/dev/null', 3)}")
+for name in ("tcp_rmem", "tcp_wmem"):
+    try:
+        print(f"{name}={Path('/proc/sys/net/ipv4/' + name).read_text(errors='replace').strip()}")
+    except Exception:
+        print(f"{name}=")
+
+section("network_quality")
+if shutil.which("curl"):
+    targets = (
+        ("cloudflare", "https://www.cloudflare.com/cdn-cgi/trace"),
+        ("google", "https://www.google.com/generate_204"),
+        ("microsoft", "https://www.microsoft.com"),
+    )
+    for name, url in targets:
+        line = run(
+            "curl -o /dev/null -fsS --max-time 6 "
+            f"-w '{name} http=%{{http_code}} dns=%{{time_namelookup}} connect=%{{time_connect}} tls=%{{time_appconnect}} total=%{{time_total}} ip=%{{remote_ip}}\\n' "
+            + shlex.quote(url)
+            + " 2>/dev/null",
+            8,
+        )
+        print(line or f"{name} error=unreachable")
+if shutil.which("ping"):
+    print_lines(run("ping -c 3 -W 2 1.1.1.1 2>/dev/null | tail -2 | sed 's/^/ping_1_1_1_1=/'", 8), 2)
+    print_lines(run("ping -c 3 -W 2 8.8.8.8 2>/dev/null | tail -2 | sed 's/^/ping_8_8_8_8=/'", 8), 2)
+
+section("apps")
+status_path = Path("/var/lib/dpkg/status")
+if status_path.exists():
+    package = ""
+    count = 0
+    for line in status_path.read_text(errors="replace").splitlines():
+        if line.startswith("Package:"):
+            package = line.split(":", 1)[1].strip()
+        elif line.startswith("Version:") and package:
+            print(f"{package}\t{line.split(':', 1)[1].strip()}")
+            count += 1
+            if count >= 40:
+                break
+elif shutil.which("rpm"):
+    print_lines(run("rpm -qa --qf '%{NAME}\\t%{VERSION}-%{RELEASE}\\n' 2>/dev/null | head -40", 8), 40)
+elif shutil.which("brew"):
+    print_lines(run("brew list --versions 2>/dev/null | head -40", 8), 40)
+
+section("services")
+print_lines(run("systemctl list-units --type=service --state=running --no-legend --no-pager 2>/dev/null | awk '{print $1 \"\\t\" $4 \"\\t\" $5}' | head -80", 10), 80)
+
+section("ports")
+if shutil.which("ss"):
+    print_lines(run("ss -lntup 2>/dev/null | tail -n +2 | head -120", 10), 120)
+elif shutil.which("netstat"):
+    print_lines(run("netstat -lntup 2>/dev/null | tail -n +3 | head -120", 10), 120)
+'''
+
+
 def split_sections(output: str) -> dict[str, list[str]]:
     sections: dict[str, list[str]] = {}
     current = ""
@@ -712,6 +913,39 @@ def fallback_local_config_report() -> tuple[str, str, dict[str, Any], list[dict[
     return "warning", "0 个应用，0 个服务", report, [], []
 
 
+def read_paramiko_exec(client: paramiko.SSHClient, command: str, timeout: int = 75) -> tuple[int, str, str]:
+    _stdin, stdout, stderr = client.exec_command(command, timeout=timeout)
+    output = stdout.read().decode("utf-8", errors="replace")
+    error = stderr.read().decode("utf-8", errors="replace")
+    return stdout.channel.recv_exit_status(), output, error
+
+
+def paramiko_has_python3(client: paramiko.SSHClient) -> bool:
+    try:
+        exit_code, output, _error = read_paramiko_exec(client, "command -v python3", timeout=8)
+    except Exception:
+        return False
+    return exit_code == 0 and bool(output.strip())
+
+
+def run_paramiko_python_script(client: paramiko.SSHClient) -> tuple[int, str, str]:
+    remote_path = f"/tmp/server-desk-inspect-{uuid.uuid4().hex}.py"
+    sftp = client.open_sftp()
+    try:
+        with sftp.file(remote_path, "w") as remote_file:
+            remote_file.write(PYTHON_INSPECTION_SCRIPT)
+        sftp.chmod(remote_path, 0o700)
+    finally:
+        sftp.close()
+    try:
+        return read_paramiko_exec(client, f"python3 {shlex.quote(remote_path)}", timeout=75)
+    finally:
+        try:
+            read_paramiko_exec(client, f"rm -f {shlex.quote(remote_path)}", timeout=5)
+        except Exception:
+            pass
+
+
 def run_paramiko_inspection(row, password: str) -> tuple[str, str, dict[str, Any], list[dict[str, str]], list[dict[str, Any]]]:
     if not password:
         return "error", "密码认证需要先保存登录凭据。", {"error": "密码认证需要先保存登录凭据。"}, [], []
@@ -729,10 +963,10 @@ def run_paramiko_inspection(row, password: str) -> tuple[str, str, dict[str, Any
             look_for_keys=False,
             allow_agent=False,
         )
-        _stdin, stdout, stderr = client.exec_command(INSPECTION_SCRIPT, timeout=45)
-        output = stdout.read().decode("utf-8", errors="replace")
-        error = stderr.read().decode("utf-8", errors="replace")
-        exit_code = stdout.channel.recv_exit_status()
+        if paramiko_has_python3(client):
+            exit_code, output, error = run_paramiko_python_script(client)
+        else:
+            exit_code, output, error = read_paramiko_exec(client, INSPECTION_SCRIPT, timeout=45)
     except Exception as exc:
         detail = str(exc).strip()[:500] or exc.__class__.__name__
         return "error", detail, {"error": detail}, [], []
