@@ -408,6 +408,7 @@ def test_inspection_script_bounds_slow_inventory_commands():
     assert "dmidecode" not in INSPECTION_SCRIPT
     assert "[ -r /var/lib/dpkg/status ]" in INSPECTION_SCRIPT
     assert "run_timeout 5 awk" in INSPECTION_SCRIPT
+    assert "c>=40" in INSPECTION_SCRIPT
     assert "run_timeout 5 dpkg-query" in INSPECTION_SCRIPT
     assert "run_timeout 10 systemctl list-units" in INSPECTION_SCRIPT
     assert "run_timeout 10 ss -lntup" in INSPECTION_SCRIPT

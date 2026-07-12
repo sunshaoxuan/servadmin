@@ -352,9 +352,9 @@ if command -v ping >/dev/null 2>&1; then
 fi
 echo "__SECTION__apps"
 if [ -r /var/lib/dpkg/status ]; then
-  run_timeout 5 awk '/^Package:/{p=$2}/^Version:/{print p "\t" $2; c++; if(c>=80) exit}' /var/lib/dpkg/status 2>/dev/null
+  run_timeout 5 awk '/^Package:/{p=$2}/^Version:/{print p "\t" $2; c++; if(c>=40) exit}' /var/lib/dpkg/status 2>/dev/null
 elif command -v dpkg-query >/dev/null 2>&1; then
-  run_timeout 5 dpkg-query -W -f='${binary:Package}\t${Version}\n' 2>/dev/null | head -80
+  run_timeout 5 dpkg-query -W -f='${binary:Package}\t${Version}\n' 2>/dev/null | head -40
 elif command -v rpm >/dev/null 2>&1; then
   run_timeout 10 rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\n' 2>/dev/null | head -80
 elif command -v brew >/dev/null 2>&1; then
