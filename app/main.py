@@ -267,6 +267,15 @@ def local_inspection_command(remote_command: str) -> list[str]:
 
 INSPECTION_SCRIPT = r"""
 set -u
+run_timeout() {
+  seconds="$1"
+  shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$seconds" "$@"
+  else
+    "$@"
+  fi
+}
 echo "__SECTION__hostname"
 printf '%s\n' "$(hostname 2>/dev/null || true)"
 printf '%s\n' "$(hostname -f 2>/dev/null || true)"
@@ -276,11 +285,7 @@ echo "__SECTION__kernel"
 uname -a 2>/dev/null || true
 echo "__SECTION__board"
 if command -v dmidecode >/dev/null 2>&1; then
-  if command -v timeout >/dev/null 2>&1; then
-    timeout 6 dmidecode -t system -t baseboard -t bios 2>/dev/null
-  else
-    dmidecode -t system -t baseboard -t bios 2>/dev/null
-  fi | awk -F: '
+  run_timeout 6 dmidecode -t system -t baseboard -t bios 2>/dev/null | awk -F: '
     /Manufacturer:/ {gsub(/^[ \t]+/, "", $2); if (!system_vendor) {system_vendor=$2}}
     /Product Name:/ {gsub(/^[ \t]+/, "", $2); if (!product_name) {product_name=$2}}
     /Version:/ {gsub(/^[ \t]+/, "", $2); if (!bios_version) {bios_version=$2}}
@@ -366,23 +371,23 @@ if command -v ping >/dev/null 2>&1; then
 fi
 echo "__SECTION__apps"
 if command -v dpkg-query >/dev/null 2>&1; then
-  dpkg-query -W -f='${binary:Package}\t${Version}\n' 2>/dev/null | head -80
+  run_timeout 10 dpkg-query -W -f='${binary:Package}\t${Version}\n' 2>/dev/null | head -80
 elif command -v rpm >/dev/null 2>&1; then
-  rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\n' 2>/dev/null | head -80
+  run_timeout 10 rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\n' 2>/dev/null | head -80
 elif command -v brew >/dev/null 2>&1; then
-  brew list --versions 2>/dev/null | head -80
+  run_timeout 10 brew list --versions 2>/dev/null | head -80
 fi
 echo "__SECTION__services"
 if command -v systemctl >/dev/null 2>&1; then
-  systemctl list-units --type=service --state=running --no-legend --no-pager 2>/dev/null | awk '{print $1 "\t" $4 "\t" $5}' | head -80
+  run_timeout 10 systemctl list-units --type=service --state=running --no-legend --no-pager 2>/dev/null | awk '{print $1 "\t" $4 "\t" $5}' | head -80
 elif command -v service >/dev/null 2>&1; then
-  service --status-all 2>/dev/null | head -80
+  run_timeout 10 service --status-all 2>/dev/null | head -80
 fi
 echo "__SECTION__ports"
 if command -v ss >/dev/null 2>&1; then
-  ss -lntup 2>/dev/null | tail -n +2 | head -120
+  run_timeout 10 ss -lntup 2>/dev/null | tail -n +2 | head -120
 elif command -v netstat >/dev/null 2>&1; then
-  netstat -lntup 2>/dev/null | tail -n +3 | head -120
+  run_timeout 10 netstat -lntup 2>/dev/null | tail -n +3 | head -120
 fi
 """
 
