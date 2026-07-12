@@ -297,10 +297,11 @@ if command -v dmidecode >/dev/null 2>&1; then
       if (bios_date) print "bios_date=" bios_date
     }'
 fi
-for path in /sys/class/dmi/id/sys_vendor /sys/class/dmi/id/product_name /sys/class/dmi/id/board_name /sys/class/dmi/id/bios_version; do
+for path in /sys/class/dmi/id/sys_vendor /sys/class/dmi/id/product_name /sys/class/dmi/id/board_name /sys/class/dmi/id/bios_version /sys/class/dmi/id/bios_date; do
   if [ -r "$path" ]; then
     key="$(basename "$path")"
-    printf '%s=%s\n' "$key" "$(cat "$path" 2>/dev/null)"
+    value="$(run_timeout 2 cat "$path" 2>/dev/null || true)"
+    printf '%s=%s\n' "$key" "$value"
   fi
 done
 echo "__SECTION__runtime"
