@@ -390,11 +390,11 @@ LISTEN 0 511 0.0.0.0:80 0.0.0.0:* users:(("nginx",pid=1,fd=6))
     assert any(service["external"] for service in services)
 
 
-def test_inspection_script_bounds_dmidecode():
+def test_inspection_script_bounds_slow_inventory_commands():
     from app.main import INSPECTION_SCRIPT
 
     assert "run_timeout()" in INSPECTION_SCRIPT
-    assert "timeout 6 dmidecode" in INSPECTION_SCRIPT
+    assert "dmidecode" not in INSPECTION_SCRIPT
     assert "run_timeout 10 dpkg-query" in INSPECTION_SCRIPT
     assert "run_timeout 10 systemctl list-units" in INSPECTION_SCRIPT
     assert "run_timeout 10 ss -lntup" in INSPECTION_SCRIPT

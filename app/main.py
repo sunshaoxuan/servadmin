@@ -284,19 +284,6 @@ echo "__SECTION__os"
 echo "__SECTION__kernel"
 uname -a 2>/dev/null || true
 echo "__SECTION__board"
-if command -v dmidecode >/dev/null 2>&1; then
-  run_timeout 6 dmidecode -t system -t baseboard -t bios 2>/dev/null | awk -F: '
-    /Manufacturer:/ {gsub(/^[ \t]+/, "", $2); if (!system_vendor) {system_vendor=$2}}
-    /Product Name:/ {gsub(/^[ \t]+/, "", $2); if (!product_name) {product_name=$2}}
-    /Version:/ {gsub(/^[ \t]+/, "", $2); if (!bios_version) {bios_version=$2}}
-    /Release Date:/ {gsub(/^[ \t]+/, "", $2); if (!bios_date) {bios_date=$2}}
-    END {
-      if (system_vendor) print "system_vendor=" system_vendor
-      if (product_name) print "product_name=" product_name
-      if (bios_version) print "bios_version=" bios_version
-      if (bios_date) print "bios_date=" bios_date
-    }'
-fi
 echo "__SECTION__runtime"
 printf 'virtualization=%s\n' "$(systemd-detect-virt 2>/dev/null || true)"
 printf 'uptime=%s\n' "$(uptime -p 2>/dev/null || true)"
