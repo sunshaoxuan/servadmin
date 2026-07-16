@@ -8,6 +8,7 @@ import re
 import shlex
 import socket
 import subprocess
+import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -21,6 +22,7 @@ from pydantic import BaseModel, Field
 import paramiko
 
 from .db import connect, init_db, row_to_server
+from .mesh import DEFAULT_INTERVAL_SECONDS, mesh_health_history, poll_mesh_once
 from .security import CredentialCipher, SessionCodec, hash_password, verify_password
 
 
@@ -28,6 +30,9 @@ BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = Path(os.environ.get("OPS_DB_PATH", BASE_DIR.parent / "data" / "ops.sqlite3"))
 APP_SECRET = os.environ.get("OPS_APP_SECRET", "dev-only-change-me")
 CREDENTIAL_KEY = os.environ.get("OPS_CREDENTIAL_KEY", CredentialCipher.generate_key())
+MESH_SECRET = os.environ.get("OPS_MESH_SECRET", "").strip()
+MESH_ENABLED = os.environ.get("OPS_MESH_ENABLED", "0") == "1" and len(MESH_SECRET) >= 32
+MESH_INTERVAL_SECONDS = max(60, int(os.environ.get("OPS_MESH_INTERVAL_SECONDS", str(DEFAULT_INTERVAL_SECONDS))))
 SESSION_COOKIE = "ops_session"
 SYSTEMD_CHECKS = [
     {"id": "server-desk", "name": "Server Desk", "unit": "server-desk.service", "category": "system"},
@@ -67,6 +72,8 @@ class ServerPayload(BaseModel):
     service_code: Optional[str] = ""
     is_starred: bool = False
     is_retired: bool = False
+    heartbeat_enabled: bool = False
+    heartbeat_port: int = Field(default=9108, ge=1, le=65535)
     tags: List[str] = Field(default_factory=list)
     notes: Optional[str] = ""
     credential: Optional[str] = ""
@@ -1014,13 +1021,33 @@ def bootstrap() -> None:
         conn.close()
 
 
+async def mesh_monitor_loop() -> None:
+    while True:
+        try:
+            await asyncio.to_thread(poll_mesh_once, DB_PATH, MESH_SECRET)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"mesh poll failed: {exc}", file=sys.stderr, flush=True)
+        await asyncio.sleep(MESH_INTERVAL_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     bootstrap()
-    yield
+    monitor_task = asyncio.create_task(mesh_monitor_loop()) if MESH_ENABLED else None
+    try:
+        yield
+    finally:
+        if monitor_task:
+            monitor_task.cancel()
+            try:
+                await monitor_task
+            except asyncio.CancelledError:
+                pass
 
 
-app = FastAPI(title="Server Admin App", version="0.1.3", lifespan=lifespan)
+app = FastAPI(title="Server Admin App", version="0.2.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
 
@@ -1059,6 +1086,11 @@ async def services_status(user=Depends(current_user)):
         "services": sorted(systems, key=lambda item: (item["category"], item["name"])),
         "applications": sorted(applications, key=lambda item: item["name"]),
     }
+
+
+@app.get("/api/mesh/health")
+def mesh_health(hours: int = 3, user=Depends(current_user), conn=Depends(db)):
+    return mesh_health_history(conn, hours)
 
 
 @app.get("/api/me")
@@ -1111,8 +1143,9 @@ def create_server(payload: ServerPayload, user=Depends(current_user), conn=Depen
         """
         insert into servers(name, hostname, ipv4, ipv6, provider, region, login_user, auth_type,
           ssh_host, ssh_port, ssh_key_path, ssh_local_key_path, ssh_windows_key_path, ssh_options, panel_url, panel_username,
-          panel_password_encrypted, service_code, is_starred, is_retired, tags_json, notes, credential_encrypted)
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          panel_password_encrypted, service_code, is_starred, is_retired, heartbeat_enabled, heartbeat_port,
+          tags_json, notes, credential_encrypted)
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             payload.name,
@@ -1135,6 +1168,8 @@ def create_server(payload: ServerPayload, user=Depends(current_user), conn=Depen
             payload.service_code or "",
             1 if payload.is_starred else 0,
             1 if payload.is_retired else 0,
+            1 if payload.heartbeat_enabled else 0,
+            payload.heartbeat_port,
             json.dumps(payload.tags),
             payload.notes or "",
             c.encrypt(payload.credential),
@@ -1159,7 +1194,7 @@ def update_server(server_id: int, payload: ServerPayload, user=Depends(current_u
         update servers set name = ?, hostname = ?, ipv4 = ?, ipv6 = ?, provider = ?, region = ?,
           login_user = ?, auth_type = ?, ssh_host = ?, ssh_port = ?, ssh_key_path = ?, ssh_local_key_path = ?,
           ssh_windows_key_path = ?, ssh_options = ?, panel_url = ?, panel_username = ?, panel_password_encrypted = ?,
-          service_code = ?, is_starred = ?, is_retired = ?, tags_json = ?, notes = ?,
+          service_code = ?, is_starred = ?, is_retired = ?, heartbeat_enabled = ?, heartbeat_port = ?, tags_json = ?, notes = ?,
           credential_encrypted = ?, updated_at = current_timestamp
         where id = ?
         """,
@@ -1184,6 +1219,8 @@ def update_server(server_id: int, payload: ServerPayload, user=Depends(current_u
             payload.service_code or "",
             1 if payload.is_starred else 0,
             1 if payload.is_retired else 0,
+            1 if payload.heartbeat_enabled else 0,
+            payload.heartbeat_port,
             json.dumps(payload.tags),
             payload.notes or "",
             credential,

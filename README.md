@@ -12,6 +12,7 @@ Server Desk 是一个网页形式的服务器管理 APP，用于维护多台服�
 - 详情面板固定显示密码框，默认遮蔽，支持显示和复制
 - 密码读取、显示和复制使用加密凭据接口，并记录凭据查看审计
 - 设置页签提供异步应用和服务状态检测，覆盖 `server-desk`、`nginx`、`frps`、`xray` 等 systemd 服务，并解析 Nginx 代理应用做本机端口连通性检测；服务器列表、详情、详情服务页签和服务卡片使用绿、红、黄状态点辅助快速判断
+- Ubuntu 节点可部署分布式心跳 Agent。每台节点主动单向上报自身及 5 分钟内的新鲜心跳，通过注册表同步自动发现节点，主服务从随机报告节点读取全网节点和应用活性，不从 ccnode 对所有节点逐台发起网络探测
 - 服务器详情中的环境检测页签按当前节点触发系统环境体检，采集操作系统、主板 BIOS、虚拟化、运行时间、负载、CPU、GPU、内存、磁盘、块设备、网络、公网 IP、网络质量、TCP 策略、应用和服务端口信息，并生成类似 NodeQuality 风格的专业报告
 - SSH 检查和配置检查执行期间，详情按钮和行内按钮进入禁用加载态，并显示旋转图标，防止重复触发
 - Debian/Ubuntu 应用清单优先读取 dpkg 状态文件，并限制采样数量，避免慢速包管理命令阻塞整次配置检查
@@ -25,6 +26,7 @@ Server Desk 是一个网页形式的服务器管理 APP，用于维护多台服�
 - 代码仓库不保存真实服务器密码。
 - `OPS_CREDENTIAL_KEY` 用于 Fernet 加密，部署后需要长期保存。
 - `OPS_APP_SECRET` 用于登录 Cookie 签名，部署后需要长期保存。
+- `OPS_MESH_SECRET` 用于节点报告和主服务读取报告时的 HMAC 签名，所有 Agent 与主服务必须保持一致，长度至少为 32 个字符。
 - 自用运维场景下，选中服务器后详情面板会固定展示密码输入框。密码默认以遮蔽形式显示，点击显示或复制时使用相同的加密凭据接口，并写入审计记录。
 
 ## 本地运行
@@ -51,6 +53,32 @@ cd C:\workspace\server-admin-app
 ## 部署说明
 
 部署目标路径建议为 `/opt/server-desk`，systemd 服务名为 `server-desk`，Nginx 反代到本机 `127.0.0.1:8090`。
+
+### 分布式心跳矩阵
+
+协议和状态模型详见 [docs/heartbeat-mesh-protocol.md](docs/heartbeat-mesh-protocol.md)。
+
+主服务环境变量：
+
+```bash
+OPS_MESH_ENABLED=1
+OPS_MESH_SECRET=<至少32字符的共享密钥>
+OPS_MESH_INTERVAL_SECONDS=300
+```
+
+部署脚本从主服务环境文件读取数据库路径、凭据密钥和矩阵密钥。首次执行先检查目标列表，再部署所有环境检测结果为 Ubuntu 的有效节点：
+
+```bash
+/opt/server-desk/.venv/bin/python /opt/server-desk/scripts/deploy_heartbeat_mesh.py \
+  --env-file /etc/server-desk/server-desk.env \
+  --all-ubuntu --configure-firewall --dry-run
+
+/opt/server-desk/.venv/bin/python /opt/server-desk/scripts/deploy_heartbeat_mesh.py \
+  --env-file /etc/server-desk/server-desk.env \
+  --all-ubuntu --configure-firewall
+```
+
+新增 Ubuntu 节点时可使用 `--server-id <ID>`。脚本会把已有心跳节点作为启动种子，新节点启动后随机选择其中一个节点注册，随后通过单向报告传播到其余节点。Agent 使用 `9108/tcp`；`--configure-firewall` 会在启用 UFW 的主机上开放该端口，接口仍要求 HMAC 签名。
 
 当前部署路径为 `https://ccnode.briconbric.com/server-desk/`。Nginx 使用 `/etc/letsencrypt/live/briconbric.com/fullchain.pem` 和 `/etc/letsencrypt/live/briconbric.com/privkey.pem` 的通用证书。
 

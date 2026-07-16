@@ -69,6 +69,8 @@ def test_login_create_reveal_and_audit():
         assert "panel_password_encrypted" not in body
         assert body["is_starred"] is True
         assert body["is_retired"] is False
+        assert body["heartbeat_enabled"] is False
+        assert body["heartbeat_port"] == 9108
 
         response = client.get(f"/api/servers/{body['id']}/credential")
         assert response.status_code == 200
@@ -194,14 +196,16 @@ def test_static_and_index_are_not_cached():
         response = client.get("/")
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
-        assert "static/styles.css?v=20260713-loading1" in response.text
-        assert "static/app.js?v=20260713-loading1" in response.text
+        assert "static/styles.css?v=20260716-mesh2" in response.text
+        assert "static/app.js?v=20260716-mesh2" in response.text
         assert 'id="detailCredential"' in response.text
         assert 'id="settingsView"' in response.text
         assert 'id="showRetiredToggle"' in response.text
         assert 'id="environmentDetailReport"' in response.text
         assert 'data-detail-tab="environment"' in response.text
         assert 'id="is_retired"' in response.text
+        assert 'id="heartbeat_enabled"' in response.text
+        assert 'id="detailMeshNetwork"' in response.text
         assert 'id="environmentView"' not in response.text
         assert 'id="runAllEnvironmentBtn"' not in response.text
 
@@ -209,12 +213,17 @@ def test_static_and_index_are_not_cached():
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
         assert "action-spinner" in response.text
+        assert "mesh-sparkline" in response.text
+        assert "mesh-network-line" in response.text
 
         response = client.get("/static/app.js")
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
         assert "runningActions" in response.text
         assert "ti-loader-2 action-spinner" in response.text
+        assert "meshHealthHtml" in response.text
+        assert "source_report_name" in response.text
+        assert 'value === null || value === undefined' in response.text
     finally:
         os.unlink(db_path)
 
@@ -519,5 +528,25 @@ def test_services_status_requires_login_and_returns_shape():
         assert "applications" in body
         service_ids = {item["id"] for item in body["services"]}
         assert {"server-desk", "nginx", "frps", "xray"}.issubset(service_ids)
+    finally:
+        os.unlink(db_path)
+
+
+def test_mesh_health_requires_login_and_returns_protocol_window():
+    client, db_path = make_client()
+    try:
+        response = client.get("/api/mesh/health")
+        assert response.status_code == 401
+
+        response = client.post("/api/login", json={"username": "admin", "password": "admin-pass"})
+        assert response.status_code == 200
+
+        response = client.get("/api/mesh/health?hours=3")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["window_hours"] == 3
+        assert body["interval_seconds"] == 300
+        assert body["freshness_seconds"] == 300
+        assert body["servers"] == []
     finally:
         os.unlink(db_path)

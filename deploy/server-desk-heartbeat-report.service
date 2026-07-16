@@ -1,0 +1,16 @@
+[Unit]
+Description=Send Server Desk heartbeat to mesh peers
+After=network-online.target server-desk-heartbeat.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=serverdesk-heartbeat
+Group=serverdesk-heartbeat
+ExecStart=/usr/bin/python3 /opt/server-desk-heartbeat/heartbeat_agent.py send-once --config /etc/server-desk-heartbeat/config.json
+StateDirectory=server-desk-heartbeat
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/server-desk-heartbeat

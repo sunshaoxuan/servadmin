@@ -1,0 +1,22 @@
+[Unit]
+Description=Server Desk decentralized heartbeat endpoint
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=serverdesk-heartbeat
+Group=serverdesk-heartbeat
+ExecStart=/usr/bin/python3 /opt/server-desk-heartbeat/heartbeat_agent.py serve --config /etc/server-desk-heartbeat/config.json
+ExecStartPost=-/usr/bin/python3 /opt/server-desk-heartbeat/heartbeat_agent.py send-once --startup --config /etc/server-desk-heartbeat/config.json
+Restart=always
+RestartSec=3
+StateDirectory=server-desk-heartbeat
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/server-desk-heartbeat
+
+[Install]
+WantedBy=multi-user.target

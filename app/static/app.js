@@ -10,6 +10,7 @@ const state = {
   connectionSecretRequests: {},
   activeTab: "servers",
   services: null,
+  meshHealth: { servers: [] },
   runningActions: {},
 };
 
@@ -42,8 +43,11 @@ function showLogin() {
 }
 
 async function loadAll() {
-  state.servers = await api("/api/servers");
-  state.audit = await api("/api/audit");
+  [state.servers, state.audit, state.meshHealth] = await Promise.all([
+    api("/api/servers"),
+    api("/api/audit"),
+    api("/api/mesh/health?hours=3"),
+  ]);
   const rows = filteredServers();
   if (!state.selectedId && rows.length) state.selectedId = rows[0].id;
   if (state.selectedId && !rows.some((s) => s.id === state.selectedId)) state.selectedId = rows[0]?.id || null;
@@ -74,7 +78,7 @@ function render() {
   }
   $("serverRows").innerHTML = rows.length
     ? rows.map(rowHtml).join("")
-    : `<tr><td colspan="7" class="text-secondary text-center py-5">暂无服务器</td></tr>`;
+    : `<tr><td colspan="8" class="text-secondary text-center py-5">暂无服务器</td></tr>`;
 
   document.querySelectorAll(".ops-row").forEach((el) => {
     el.addEventListener("click", () => {
@@ -149,6 +153,55 @@ function showTab(tab) {
   }
 }
 
+function meshRecord(serverId) {
+  return (state.meshHealth?.servers || []).find((item) => item.server_id === serverId) || null;
+}
+
+function meshScore(value) {
+  if (value === null || value === undefined || value === "") return "无数据";
+  return Number.isFinite(Number(value)) ? `${Math.round(Number(value))}%` : "无数据";
+}
+
+function sparklinePoints(samples, field, width = 148, height = 40) {
+  const values = samples.filter(
+    (item) => item[field] !== null && item[field] !== undefined && Number.isFinite(Number(item[field])),
+  );
+  if (!values.length) return "";
+  const start = Number(samples[0]?.sampled_at || values[0].sampled_at);
+  const end = Math.max(start + 1, Number(samples[samples.length - 1]?.sampled_at || values[values.length - 1].sampled_at));
+  return values.map((item) => {
+    const x = 3 + ((Number(item.sampled_at) - start) / (end - start)) * (width - 6);
+    const y = 3 + ((100 - Number(item[field])) / 100) * (height - 6);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+}
+
+function meshHealthHtml(server) {
+  if (!server.heartbeat_enabled) return '<div class="mesh-empty">未部署</div>';
+  const record = meshRecord(server.id);
+  if (!record?.current) return '<div class="mesh-empty pending">等待首个样本</div>';
+  const samples = record.samples || [];
+  const current = record.current;
+  const age = Math.max(0, Math.floor(Date.now() / 1000) - Number(current.sampled_at || 0));
+  const stale = age > Number(state.meshHealth?.freshness_seconds || 300);
+  const networkPoints = sparklinePoints(samples, "network_score");
+  const appPoints = sparklinePoints(samples, "app_score");
+  const title = `心跳 ${meshScore(current.network_score)}，应用 ${meshScore(current.app_score)}，传播 ${current.peer_visible}/${current.peer_expected}`;
+  return `
+    <div class="mesh-health ${stale ? "stale" : ""}" title="${escapeHtml(title)}">
+      <svg class="mesh-sparkline" viewBox="0 0 148 40" role="img" aria-label="${escapeHtml(title)}">
+        <line x1="3" y1="20" x2="145" y2="20" class="mesh-guide"></line>
+        ${networkPoints ? `<polyline points="${networkPoints}" class="mesh-network-line"></polyline>` : ""}
+        ${appPoints ? `<polyline points="${appPoints}" class="mesh-app-line"></polyline>` : ""}
+      </svg>
+      <div class="mesh-scores">
+        <span><i class="mesh-key network"></i>网络 ${meshScore(current.network_score)}</span>
+        <span><i class="mesh-key apps"></i>应用 ${meshScore(current.app_score)}</span>
+      </div>
+      ${stale ? '<small>样本已过期</small>' : `<small>${current.peer_visible}/${current.peer_expected} 个同伴可见</small>`}
+    </div>`;
+}
+
 function rowHtml(s) {
   const active = s.id === state.selectedId ? "active" : "";
   const retired = Boolean(s.is_retired);
@@ -181,6 +234,7 @@ function rowHtml(s) {
         ${statusPill(configStatus, configLabel(configStatus), "config")}
         <span class="server-sub">${escapeHtml(s.config_summary || "未检查")}</span>
       </td>
+      <td data-label="3 小时健康">${meshHealthHtml(s)}</td>
       <td data-label="最近检查"><span class="server-sub">${escapeHtml(s.last_checked_at ? s.last_checked_at.slice(0, 16) : "未检查")}</span></td>
       <td data-label="操作">
         <div class="row-actions">
@@ -230,6 +284,13 @@ function renderDetail() {
   $("detailUpdated").textContent = formatDateTime(s.updated_at);
   $("detailCheckedAt").textContent = formatDateTime(s.last_checked_at);
   $("detailConfigStatus").innerHTML = `${statusPill(s.config_status || "unknown", configLabel(s.config_status), "config")} ${escapeHtml(s.config_summary || "未检查")}`;
+  const mesh = meshRecord(s.id)?.current;
+  $("detailMeshNetwork").textContent = s.heartbeat_enabled && mesh
+    ? `${mesh.direct_ok ? "心跳新鲜" : "心跳过期"}，传播 ${mesh.peer_visible}/${mesh.peer_expected}，报告源 ${mesh.details?.source_report_name || "无"}`
+    : s.heartbeat_enabled ? "等待首个样本" : "未启用";
+  $("detailMeshApps").textContent = s.heartbeat_enabled && mesh
+    ? meshScore(mesh.app_score)
+    : s.heartbeat_enabled ? "等待首个样本" : "未启用";
   $("detailConfigStatusPanel").innerHTML = `${statusPill(s.config_status || "unknown", configLabel(s.config_status), "config")} ${escapeHtml(s.config_summary || "未检查")}`;
   $("detailConfigReport").innerHTML = configReportHtml(s.config_report || {});
   $("inspectionSummary").textContent = s.last_config_check_at ? `检查时间 ${formatDateTime(s.last_config_check_at)}` : "未检查";
@@ -479,10 +540,12 @@ function reportSectionHtml(section) {
 function openForm(server = null) {
   $("dialogTitle").textContent = server ? "编辑服务器" : "新增服务器";
   $("serverId").value = server?.id || "";
-  for (const id of ["name", "hostname", "ipv4", "ipv6", "provider", "region", "login_user", "auth_type", "ssh_host", "ssh_port", "ssh_key_path", "ssh_local_key_path", "ssh_windows_key_path", "ssh_options", "panel_url", "panel_username", "service_code", "notes"]) {
+  for (const id of ["name", "hostname", "ipv4", "ipv6", "provider", "region", "login_user", "auth_type", "ssh_host", "ssh_port", "ssh_key_path", "ssh_local_key_path", "ssh_windows_key_path", "ssh_options", "panel_url", "panel_username", "service_code", "heartbeat_port", "notes"]) {
     $(id).value = server?.[id] || "";
   }
   $("ssh_port").value = server?.ssh_port || 22;
+  $("heartbeat_port").value = server?.heartbeat_port || 9108;
+  $("heartbeat_enabled").checked = Boolean(server?.heartbeat_enabled);
   $("is_starred").checked = Boolean(server?.is_starred);
   $("is_retired").checked = Boolean(server?.is_retired);
   $("tags").value = (server?.tags || []).join(", ");
@@ -512,6 +575,8 @@ function payloadFromForm() {
     panel_username: $("panel_username").value.trim(),
     panel_password: $("panel_password").value,
     service_code: $("service_code").value.trim(),
+    heartbeat_enabled: $("heartbeat_enabled").checked,
+    heartbeat_port: Number($("heartbeat_port").value || 9108),
     is_starred: $("is_starred").checked,
     is_retired: $("is_retired").checked,
     tags: $("tags").value.split(",").map((x) => x.trim()).filter(Boolean),
@@ -1039,3 +1104,13 @@ $("copyCredentialBtn").addEventListener("click", async () => {
     showLogin();
   }
 })();
+
+setInterval(async () => {
+  if ($("appView").classList.contains("hidden")) return;
+  try {
+    state.meshHealth = await api("/api/mesh/health?hours=3");
+    render();
+  } catch {
+    // The next interval retries without interrupting the dashboard.
+  }
+}, 60_000);

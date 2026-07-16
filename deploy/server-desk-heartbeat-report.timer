@@ -1,0 +1,12 @@
+[Unit]
+Description=Evaluate Server Desk heartbeat targets every minute
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=1min
+AccuracySec=15s
+Persistent=true
+Unit=server-desk-heartbeat-report.service
+
+[Install]
+WantedBy=timers.target

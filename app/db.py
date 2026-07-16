@@ -37,6 +37,8 @@ create table if not exists servers (
   service_code text,
   is_starred integer not null default 0,
   is_retired integer not null default 0,
+  heartbeat_enabled integer not null default 0,
+  heartbeat_port integer not null default 9108,
   tags_json text not null default '[]',
   notes text,
   credential_encrypted text,
@@ -62,6 +64,23 @@ create table if not exists audit_events (
   detail text,
   created_at text not null default current_timestamp
 );
+
+create table if not exists mesh_health_samples (
+  id integer primary key autoincrement,
+  server_id integer not null references servers(id) on delete cascade,
+  sampled_at integer not null,
+  network_score real not null,
+  app_score real,
+  direct_ok integer not null default 0,
+  direct_latency_ms integer,
+  peer_visible integer not null default 0,
+  peer_expected integer not null default 0,
+  details_json text not null default '{}',
+  unique(server_id, sampled_at)
+);
+
+create index if not exists idx_mesh_health_server_time
+on mesh_health_samples(server_id, sampled_at);
 """
 
 SERVER_MIGRATIONS = {
@@ -76,6 +95,8 @@ SERVER_MIGRATIONS = {
     "panel_password_encrypted": "alter table servers add column panel_password_encrypted text",
     "is_starred": "alter table servers add column is_starred integer not null default 0",
     "is_retired": "alter table servers add column is_retired integer not null default 0",
+    "heartbeat_enabled": "alter table servers add column heartbeat_enabled integer not null default 0",
+    "heartbeat_port": "alter table servers add column heartbeat_port integer not null default 9108",
     "config_status": "alter table servers add column config_status text not null default 'unknown'",
     "config_summary": "alter table servers add column config_summary text",
     "config_report_json": "alter table servers add column config_report_json text not null default '{}'",
@@ -111,6 +132,7 @@ def row_to_server(row: sqlite3.Row) -> dict[str, Any]:
     data["tags"] = json.loads(data.pop("tags_json") or "[]")
     data["is_starred"] = bool(data.get("is_starred"))
     data["is_retired"] = bool(data.get("is_retired"))
+    data["heartbeat_enabled"] = bool(data.get("heartbeat_enabled"))
     data["config_report"] = json.loads(data.pop("config_report_json") or "{}")
     data["installed_apps"] = json.loads(data.pop("installed_apps_json") or "[]")
     data["services"] = json.loads(data.pop("services_json") or "[]")
