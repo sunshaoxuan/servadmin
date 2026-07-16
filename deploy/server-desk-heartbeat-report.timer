@@ -5,6 +5,7 @@ Description=Evaluate Server Desk heartbeat targets every minute
 OnBootSec=30s
 OnUnitActiveSec=1min
 AccuracySec=15s
+RandomizedDelaySec=30s
 Persistent=true
 Unit=server-desk-heartbeat-report.service
 

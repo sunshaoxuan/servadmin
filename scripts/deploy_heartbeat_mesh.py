@@ -153,7 +153,15 @@ def _upload(client: paramiko.SSHClient, content: bytes, suffix: str) -> str:
     return remote
 
 
-def deploy_node(row, peers: list[dict[str, Any]], secret: str, port: int, cipher, configure_firewall: bool) -> dict[str, Any]:
+def deploy_node(
+    row,
+    peers: list[dict[str, Any]],
+    secret: str,
+    port: int,
+    cipher,
+    configure_firewall: bool,
+    membership_epoch: int,
+) -> dict[str, Any]:
     client, password = _connect(row, cipher)
     uploaded: list[str] = []
     try:
@@ -166,6 +174,13 @@ def deploy_node(row, peers: list[dict[str, Any]], secret: str, port: int, cipher
             "port": port,
             "state_path": "/var/lib/server-desk-heartbeat/heartbeat.sqlite3",
             "request_timeout": 4,
+            "membership_epoch": membership_epoch,
+            "fanout": 3,
+            "stable_fanout": 2,
+            "registration_max_attempts": 5,
+            "report_time_budget_seconds": 20,
+            "local_status_interval_seconds": 60,
+            "max_workers": 32,
             "peers": [peer for peer in peers if str(peer["node_id"]) != str(row["id"])],
             "services": _services(row),
         }
@@ -243,11 +258,13 @@ def main() -> int:
     ]
     if len(peers) != len(mesh_rows):
         raise SystemExit("every mesh server must have an IPv4 address")
+    membership_epoch = time.time_ns()
     if args.dry_run:
         print(
             json.dumps(
                 {
                     "port": args.port,
+                    "membership_epoch": membership_epoch,
                     "targets": [{"server_id": row["id"], "name": row["name"]} for row in selected],
                     "registry": peers,
                 },
@@ -263,7 +280,15 @@ def main() -> int:
     for row in selected:
         started = time.perf_counter()
         try:
-            result = deploy_node(row, peers, secret, args.port, cipher, args.configure_firewall)
+            result = deploy_node(
+                row,
+                peers,
+                secret,
+                args.port,
+                cipher,
+                args.configure_firewall,
+                membership_epoch,
+            )
             conn.execute(
                 "update servers set heartbeat_enabled = 1, heartbeat_port = ?, updated_at = current_timestamp where id = ?",
                 (args.port, row["id"]),

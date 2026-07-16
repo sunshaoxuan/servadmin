@@ -19,6 +19,9 @@ HEARTBEAT_OFFLINE_SECONDS = 2 * HEARTBEAT_FRESH_SECONDS + DEFAULT_INTERVAL_SECON
 SYNC_DELAY_SCORE = 70.0
 MAX_CLOCK_SKEW_SECONDS = 650
 SAMPLE_RETENTION_SECONDS = 7 * 24 * 60 * 60
+MAX_REPORT_BYTES = 512 * 1024
+REPORT_SAMPLE_SIZE = 3
+REPORT_MAX_ATTEMPTS = 6
 
 
 def request_signature(secret: str, method: str, path: str, timestamp: str, body: bytes = b"") -> str:
@@ -49,15 +52,19 @@ def fetch_peer_report(server: dict[str, Any], secret: str, timeout: float = 3.0)
     host = server.get("ipv4") or server.get("hostname")
     port = int(server.get("heartbeat_port") or DEFAULT_HEARTBEAT_PORT)
     path = "/v1/report"
+    headers = signed_headers(secret, "server-desk-main", "GET", path)
+    headers["X-Heartbeat-Protocol"] = "2"
     request = urllib.request.Request(
         f"http://{host}:{port}{path}",
         method="GET",
-        headers=signed_headers(secret, "server-desk-main", "GET", path),
+        headers=headers,
     )
     started = time.perf_counter()
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            body = response.read(512 * 1024)
+            body = response.read(MAX_REPORT_BYTES + 1)
+            if len(body) > MAX_REPORT_BYTES:
+                raise RuntimeError("heartbeat report exceeds size limit")
             response_node = response.headers.get("X-Heartbeat-Node", "")
             timestamp = response.headers.get("X-Heartbeat-Timestamp", "")
             signature = response.headers.get("X-Heartbeat-Signature", "")
@@ -97,14 +104,30 @@ def _report_payloads(report: dict[str, Any]) -> list[dict[str, Any]]:
     return list(latest.values())
 
 
-def _latest_payload(target_id: str, reports: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+def _latest_payload(
+    target_id: str,
+    reports: dict[str, dict[str, Any]],
+) -> tuple[str, dict[str, Any] | None]:
     candidates = [
-        payload
-        for report in reports.values()
+        (source_id, payload)
+        for source_id, report in reports.items()
         for payload in _report_payloads(report)
         if str(payload.get("node_id")) == target_id
     ]
-    return max(candidates, key=lambda item: int(item.get("observed_at") or 0)) if candidates else None
+    if not candidates:
+        return "", None
+    def version_key(item: tuple[str, dict[str, Any]]) -> tuple[int, int, int, int]:
+        payload = item[1]
+        incarnation = int(payload.get("incarnation") or 0)
+        observed_at = int(payload.get("observed_at") or 0)
+        if incarnation > 0:
+            return (1, incarnation, int(payload.get("sequence") or 0), observed_at)
+        return (0, observed_at, 0, observed_at)
+
+    return max(
+        candidates,
+        key=version_key,
+    )
 
 
 def record_mesh_cycle(
@@ -119,19 +142,22 @@ def record_mesh_cycle(
     server_rows = list(servers)
     expected_peers = max(0, len(server_rows) - 1)
     failures = errors or {}
-    source_id = next(iter(reports), "")
-    source_report = reports.get(source_id, {})
     registry_ids = {
         str(item.get("node_id"))
-        for item in source_report.get("registry") or []
-        if isinstance(item, dict) and item.get("node_id") is not None
+        for report in reports.values()
+        for item in report.get("registry") or []
+        if isinstance(item, dict)
+        and item.get("node_id") is not None
+        and item.get("membership_status", "active") == "active"
     }
+    report_source_ids = [int(item) for item in reports if item.isdigit()]
     recorded: list[dict[str, Any]] = []
 
     for server in server_rows:
         server_id = int(server["id"])
         target_id = str(server_id)
-        payload = _latest_payload(target_id, reports)
+        source_id, payload = _latest_payload(target_id, reports)
+        source_report = reports.get(source_id, {})
         observed_at = int(payload.get("observed_at") or 0) if payload else 0
         age = now - observed_at if observed_at else None
         timestamp_fresh = bool(
@@ -141,7 +167,8 @@ def record_mesh_cycle(
             payload and age is not None and -MAX_CLOCK_SKEW_SECONDS <= age < HEARTBEAT_OFFLINE_SECONDS
         )
         seen_by = {str(item) for item in (payload or {}).get("seen_by", []) if item}
-        visible = min(expected_peers, len(seen_by - {target_id}))
+        seen_count = max(len(seen_by), int((payload or {}).get("seen_count") or 0))
+        visible = min(expected_peers, max(len(seen_by - {target_id}), seen_count - 1))
         visibility_confirmed = expected_peers == 0 or visible > 0
         fresh = timestamp_fresh and visibility_confirmed
         active = timestamp_active and visibility_confirmed
@@ -153,6 +180,7 @@ def record_mesh_cycle(
         network_score = 100.0 if fresh else SYNC_DELAY_SCORE if sync_delayed else 0.0
         details = {
             "source_report_server_id": int(source_id) if source_id.isdigit() else None,
+            "source_report_server_ids": report_source_ids,
             "source_report_name": (source_report.get("node") or {}).get("node_name", ""),
             "observed_at": observed_at or None,
             "heartbeat_age_seconds": age,
@@ -219,6 +247,7 @@ def poll_mesh_once(
     fetcher: Callable[[dict[str, Any], str], dict[str, Any]] = fetch_peer_report,
     sampled_at: int | None = None,
     rng: random.Random | None = None,
+    sample_size: int = REPORT_SAMPLE_SIZE,
 ) -> list[dict[str, Any]]:
     conn = connect(db_path)
     try:
@@ -231,11 +260,14 @@ def poll_mesh_once(
         (rng or random.SystemRandom()).shuffle(candidates)
         reports: dict[str, dict[str, Any]] = {}
         errors: dict[str, str] = {}
-        for server in candidates:
+        success_goal = min(len(candidates), max(1, int(sample_size)))
+        attempt_limit = min(len(candidates), max(success_goal, REPORT_MAX_ATTEMPTS))
+        for server in candidates[:attempt_limit]:
             key = str(server["id"])
             try:
                 reports[key] = fetcher(server, secret)
-                break
+                if len(reports) >= success_goal:
+                    break
             except Exception as exc:
                 errors[key] = str(exc)[:240] or exc.__class__.__name__
         return record_mesh_cycle(conn, servers, reports, errors, sampled_at)

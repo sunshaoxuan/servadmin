@@ -1,5 +1,9 @@
 # 分布式心跳矩阵协议
 
+> 本文保存 V1 行为供历史排查。生产协议已经升级为 V2，当前规则见
+> [heartbeat-mesh-protocol-v2.md](heartbeat-mesh-protocol-v2.md)。
+
+
 ## 目标
 
 每台 Ubuntu 主机运行一个独立 Agent。任意 Agent 都保存已注册节点信息和最近心跳，主服务每个采样周期随机连接一个 Agent，即可读取该 Agent 视角下的节点活性与应用活性。
