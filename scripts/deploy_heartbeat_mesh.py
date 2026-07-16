@@ -8,6 +8,7 @@ import shlex
 import sys
 import time
 import uuid
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Any
 
@@ -88,6 +89,20 @@ def _activation_commands(port: int) -> list[str]:
         "systemctl is-active --quiet server-desk-heartbeat.service",
         "systemctl is-active --quiet server-desk-heartbeat-report.timer",
         f"ss -ltn | grep -q ':{port} '",
+    ]
+
+
+def _firewall_commands(port: int, allowed_hosts: list[str]) -> list[str]:
+    if not 1 <= port <= 65535:
+        raise ValueError("heartbeat port must be between 1 and 65535")
+    normalized_hosts = sorted({str(ip_address(host)) for host in allowed_hosts})
+    if not normalized_hosts:
+        raise ValueError("at least one heartbeat firewall source is required")
+    return [
+        "if command -v ufw >/dev/null 2>&1; then "
+        f"ufw allow proto tcp from {shlex.quote(host)} to any port {port} "
+        "comment 'server-desk-heartbeat'; fi"
+        for host in normalized_hosts
     ]
 
 
@@ -175,10 +190,7 @@ def deploy_node(row, peers: list[dict[str, Any]], secret: str, port: int, cipher
                 f"install -o root -g root -m 0644 {shlex.quote(remote_files[unit.name])} /etc/systemd/system/{unit.name}"
             )
         if configure_firewall:
-            install.append(
-                "if command -v ufw >/dev/null 2>&1 && ufw status | grep -q '^Status: active'; then "
-                f"ufw allow {port}/tcp comment 'server-desk-heartbeat'; fi"
-            )
+            install.extend(_firewall_commands(port, [peer["host"] for peer in peers]))
         install.extend(_activation_commands(port))
         _run(client, "set -e\n" + "\n".join(install), row["login_user"], password, timeout=90)
         return {

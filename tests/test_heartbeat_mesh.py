@@ -12,7 +12,12 @@ from app.mesh import (
     poll_mesh_once,
 )
 from scripts import heartbeat_protocol as protocol
-from scripts.deploy_heartbeat_mesh import _activation_commands, _deployment_rows, _services
+from scripts.deploy_heartbeat_mesh import (
+    _activation_commands,
+    _deployment_rows,
+    _firewall_commands,
+    _services,
+)
 
 
 def agent_config(tmp_path, node_id, peers):
@@ -545,6 +550,37 @@ def test_deployment_restarts_agent_and_runs_immediate_report():
     assert commands.index("systemctl restart server-desk-heartbeat.service") < commands.index(
         "systemctl start server-desk-heartbeat-report.service"
     )
+
+
+def test_firewall_commands_only_allow_registered_node_addresses():
+    commands = _firewall_commands(
+        9108,
+        ["203.24.89.50", "160.16.91.200", "203.24.89.50", "103.137.215.138"],
+    )
+
+    assert len(commands) == 3
+    assert all("ufw allow proto tcp from" in command for command in commands)
+    assert all("to any port 9108" in command for command in commands)
+    assert all("ufw allow 9108/tcp" not in command for command in commands)
+    assert any("from 103.137.215.138" in command for command in commands)
+    assert any("from 160.16.91.200" in command for command in commands)
+    assert any("from 203.24.89.50" in command for command in commands)
+
+
+def test_firewall_commands_reject_invalid_addresses_and_ports():
+    try:
+        _firewall_commands(9108, ["node.example"])
+    except ValueError as exc:
+        assert "node.example" in str(exc)
+    else:
+        raise AssertionError("invalid firewall source was accepted")
+
+    try:
+        _firewall_commands(70000, ["203.24.89.50"])
+    except ValueError as exc:
+        assert "port" in str(exc)
+    else:
+        raise AssertionError("invalid heartbeat port was accepted")
 
 
 def test_signed_http_registration_round_trip(tmp_path):

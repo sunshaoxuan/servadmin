@@ -131,6 +131,8 @@ systemd 定时器每分钟执行一次目标选择。Agent 查询 `outbound_stat
 - `report_id` 提供请求幂等，时间戳限制重放窗口。
 - 配置文件权限为 `0640 root:serverdesk-heartbeat`。
 - Agent 使用独立系统用户运行，systemd 启用 `NoNewPrivileges`、`ProtectSystem=strict` 和 `ProtectHome=true`。
+- 部署参数 `--configure-firewall` 只为完整注册表中的节点 IP 添加 UFW 来源白名单，不创建面向任意来源的 9108 规则，也不自动启用 UFW。
+- 云厂商安全组需要独立配置相同的节点 IP 白名单；主机 UFW 规则无法替代云侧入站策略。
 
 ## 验收
 
@@ -144,3 +146,4 @@ systemd 定时器每分钟执行一次目标选择。Agent 查询 `outbound_stat
 8. 多节点环境中的 self-only 心跳显示为“未被邻居确认”，网络活性为 0。
 9. 心跳达到 300 秒后显示同步延迟，停止 Agent 达到 660 秒后显示离线。
 10. 停止被监控的应用服务后，下一个有效心跳中的 `app_score` 降低。
+11. 防火墙部署命令只包含已登记节点 IP，不包含面向任意来源的 `9108/tcp` 放行规则。
