@@ -95,6 +95,7 @@ def connect_state(path: str | Path) -> sqlite3.Connection:
           peer_id text primary key,
           peer_name text not null,
           attempted_at integer not null,
+          succeeded_at integer,
           ok integer not null,
           latency_ms integer,
           error text
@@ -105,6 +106,14 @@ def connect_state(path: str | Path) -> sqlite3.Connection:
           received_at integer not null
         );
         """
+    )
+    outbound_columns = {
+        str(row["name"]) for row in conn.execute("pragma table_info(outbound_status)").fetchall()
+    }
+    if "succeeded_at" not in outbound_columns:
+        conn.execute("alter table outbound_status add column succeeded_at integer")
+    conn.execute(
+        "update outbound_status set succeeded_at = attempted_at where succeeded_at is null and ok = 1"
     )
     conn.commit()
     return conn
@@ -165,7 +174,7 @@ def collect_local_status(config: dict[str, Any], now: int | None = None) -> dict
         "load_average": load_average,
         "memory_used_percent": _memory_percent(),
         "disk_used_percent": disk_percent,
-        "agent_version": "1.0.0",
+        "agent_version": "1.1.0",
         "seen_by": [str(config["node_id"])],
     }
 
@@ -210,6 +219,18 @@ def initialize_state(conn: sqlite3.Connection, config: dict[str, Any], now: int)
 
 def store_self_heartbeat(conn: sqlite3.Connection, config: dict[str, Any], now: int) -> dict[str, Any]:
     payload = collect_local_status(config, now)
+    payload["seen_by"] = sorted(
+        {
+            str(config["node_id"]),
+            *{
+                str(row["peer_id"])
+                for row in conn.execute(
+                    "select peer_id from outbound_status where succeeded_at > ?",
+                    (now - HEARTBEAT_FRESH_SECONDS,),
+                ).fetchall()
+            },
+        }
+    )
     register_nodes(conn, [payload], now)
     conn.execute(
         """
@@ -237,6 +258,7 @@ def merge_heartbeat_record(
     config: dict[str, Any],
     raw: dict[str, Any],
     now: int,
+    allow_stale: bool = False,
 ) -> bool:
     try:
         payload = dict(raw)
@@ -248,7 +270,7 @@ def merge_heartbeat_record(
     if node_id == str(config["node_id"]):
         return False
     age = now - observed_at
-    if age < -MAX_CLOCK_SKEW_SECONDS or age >= HEARTBEAT_FRESH_SECONDS:
+    if age < -MAX_CLOCK_SKEW_SECONDS or (not allow_stale and age >= HEARTBEAT_FRESH_SECONDS):
         return False
     if not descriptor["host"] or not descriptor["port"]:
         return False
@@ -339,15 +361,20 @@ def merge_sync_payload(
     now: int,
 ) -> int:
     register_nodes(conn, list(payload.get("registry") or []), now)
-    candidates = list(payload.get("records") or [])
+    candidates = [(record, False) for record in payload.get("records") or []]
     if isinstance(payload.get("self"), dict):
-        candidates.append(payload["self"])
+        candidates.append((payload["self"], False))
     for received in payload.get("received") or []:
         if isinstance(received, dict) and isinstance(received.get("payload"), dict):
-            candidates.append(received["payload"])
+            candidates.append((received["payload"], False))
+    candidates.extend(
+        (record, True)
+        for record in payload.get("latest_records") or []
+        if isinstance(record, dict)
+    )
     merged = 0
     seen_ids: set[tuple[str, int]] = set()
-    for record in candidates:
+    for record, allow_stale in candidates:
         if not isinstance(record, dict):
             continue
         try:
@@ -356,8 +383,9 @@ def merge_sync_payload(
             continue
         if key in seen_ids:
             continue
-        seen_ids.add(key)
-        merged += 1 if merge_heartbeat_record(conn, config, record, now) else 0
+        if merge_heartbeat_record(conn, config, record, now, allow_stale=allow_stale):
+            seen_ids.add(key)
+            merged += 1
     conn.commit()
     return merged
 
@@ -404,7 +432,8 @@ def _known_peers(conn: sqlite3.Connection, config: dict[str, Any]) -> list[dict[
         dict(row)
         for row in conn.execute(
             """
-            select n.node_id, n.node_name, n.host, n.port, o.attempted_at, o.ok
+            select n.node_id, n.node_name, n.host, n.port,
+                   o.attempted_at, o.succeeded_at, o.ok
             from registered_nodes n
             left join outbound_status o on o.peer_id = n.node_id
             where n.node_id != ?
@@ -425,8 +454,14 @@ def select_report_targets(
     initialize_state(conn, config, now)
     peers = _known_peers(conn, config)
     picker = rng or random.SystemRandom()
-    if startup:
-        return [picker.choice(peers)] if peers else []
+    registration_required = not any(
+        peer.get("succeeded_at") is not None
+        and int(peer["succeeded_at"]) > now - HEARTBEAT_FRESH_SECONDS
+        for peer in peers
+    )
+    if startup or registration_required:
+        picker.shuffle(peers)
+        return peers
     due = [
         peer
         for peer in peers
@@ -442,7 +477,13 @@ def prepare_report(config: dict[str, Any], target: dict[str, Any], now: int) -> 
         initialize_state(conn, config, now)
         store_self_heartbeat(conn, config, now)
         target_id = str(target["node_id"])
-        records = [record for record in fresh_records(conn, now) if target_id not in set(record.get("seen_by", []))]
+        self_id = str(config["node_id"])
+        records = [
+            record
+            for record in fresh_records(conn, now)
+            if str(record.get("node_id")) == self_id
+            or target_id not in set(record.get("seen_by", []))
+        ]
         payload = {
             "protocol_version": 1,
             "report_id": uuid.uuid4().hex,
@@ -510,6 +551,10 @@ def send_once(
     current = int(now if now is not None else time.time())
     conn = connect_state(config["state_path"])
     try:
+        registration_required = startup or not conn.execute(
+            "select 1 from outbound_status where succeeded_at > ? limit 1",
+            (current - HEARTBEAT_FRESH_SECONDS,),
+        ).fetchone()
         targets = select_report_targets(conn, config, startup, current, rng)
         conn.commit()
     finally:
@@ -536,11 +581,14 @@ def send_once(
         try:
             conn.execute(
                 """
-                insert into outbound_status(peer_id, peer_name, attempted_at, ok, latency_ms, error)
-                values (?, ?, ?, ?, ?, ?)
+                insert into outbound_status(
+                  peer_id, peer_name, attempted_at, succeeded_at, ok, latency_ms, error
+                )
+                values (?, ?, ?, ?, ?, ?, ?)
                 on conflict(peer_id) do update set
                   peer_name=excluded.peer_name,
                   attempted_at=excluded.attempted_at,
+                  succeeded_at=coalesce(excluded.succeeded_at, outbound_status.succeeded_at),
                   ok=excluded.ok,
                   latency_ms=excluded.latency_ms,
                   error=excluded.error
@@ -549,6 +597,7 @@ def send_once(
                     str(target["node_id"]),
                     target["node_name"],
                     current,
+                    current if ok else None,
                     1 if ok else 0,
                     latency_ms,
                     error,
@@ -566,6 +615,8 @@ def send_once(
                 "error": error,
             }
         )
+        if registration_required and ok:
+            break
     return results
 
 

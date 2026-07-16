@@ -1,4 +1,5 @@
 import random
+import sqlite3
 import threading
 import time
 
@@ -11,7 +12,7 @@ from app.mesh import (
     poll_mesh_once,
 )
 from scripts import heartbeat_protocol as protocol
-from scripts.deploy_heartbeat_mesh import _deployment_rows, _services
+from scripts.deploy_heartbeat_mesh import _activation_commands, _deployment_rows, _services
 
 
 def agent_config(tmp_path, node_id, peers):
@@ -78,6 +79,42 @@ def test_startup_registration_uses_one_random_peer_and_syncs_registry(tmp_path):
     report = protocol.build_report(config, now + 1)
     assert {item["node_id"] for item in report["registry"]} == {"1", "2", "3", "4"}
     assert calls[0][0] in {record["node_id"] for record in report["records"]}
+    assert set(report["self"]["seen_by"]) == {"1", calls[0][0]}
+
+
+def test_startup_registration_retries_random_peers_until_one_acknowledges(tmp_path):
+    now = 1_500
+    config = agent_config(tmp_path, 1, [descriptor(2), descriptor(3)])
+    calls = []
+
+    def sender(_config, target, payload):
+        calls.append((target["node_id"], payload))
+        if len(calls) == 1:
+            raise TimeoutError("first peer unavailable")
+        return {
+            "ok": True,
+            "registry": [descriptor(1), descriptor(2), descriptor(3)],
+            "records": [heartbeat(target["node_id"], now)],
+        }
+
+    results = protocol.send_once(
+        config,
+        startup=True,
+        now=now,
+        sender=sender,
+        rng=random.Random(11),
+    )
+
+    assert [item["ok"] for item in results] == [False, True]
+    assert len(calls) == 2
+    assert calls[0][0] != calls[1][0]
+    assert all(
+        {record["node_id"] for record in payload["records"]} == {"1"}
+        for _target_id, payload in calls
+    )
+    report = protocol.build_report(config, now + 1)
+    assert set(report["self"]["seen_by"]) == {"1", calls[1][0]}
+
 
 
 def test_regular_reports_only_to_nodes_due_after_five_minutes(tmp_path):
@@ -100,6 +137,7 @@ def test_regular_reports_only_to_nodes_due_after_five_minutes(tmp_path):
             """,
             (now - protocol.REPORT_INTERVAL_SECONDS - 1,),
         )
+        conn.execute("update outbound_status set succeeded_at = attempted_at")
         conn.commit()
     finally:
         conn.close()
@@ -119,6 +157,74 @@ def test_regular_reports_only_to_nodes_due_after_five_minutes(tmp_path):
     assert [item["peer_id"] for item in results] == ["3"]
     assert calls == ["3"]
     assert protocol.send_once(config, now=now + 10, sender=sender, rng=random.Random(2)) == []
+
+
+def test_missing_visibility_lease_retries_without_waiting_for_cooldown(tmp_path):
+    now = 2_500
+    config = agent_config(tmp_path, 1, [descriptor(2), descriptor(3)])
+    conn = protocol.connect_state(config["state_path"])
+    try:
+        protocol.initialize_state(conn, config, now)
+        for peer_id in ("2", "3"):
+            conn.execute(
+                """
+                insert into outbound_status(peer_id, peer_name, attempted_at, ok, latency_ms, error)
+                values (?, ?, ?, 0, 4000, 'timeout')
+                """,
+                (peer_id, f"node-{peer_id}", now - 10),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    calls = []
+
+    def sender(_config, target, _payload):
+        calls.append(target["node_id"])
+        return {
+            "ok": True,
+            "registry": [descriptor(1), descriptor(2), descriptor(3)],
+            "records": [heartbeat(target["node_id"], now)],
+        }
+
+    results = protocol.send_once(config, now=now, sender=sender, rng=random.Random(5))
+
+    assert len(results) == 1
+    assert results[0]["ok"] is True
+    assert calls == [results[0]["peer_id"]]
+    assert set(protocol.build_report(config, now + 1)["self"]["seen_by"]) == {"1", calls[0]}
+
+
+def test_outbound_status_schema_migrates_successful_acknowledgements(tmp_path):
+    state_path = tmp_path / "legacy-heartbeat.sqlite3"
+    legacy = sqlite3.connect(state_path)
+    try:
+        legacy.executescript(
+            """
+            create table outbound_status (
+              peer_id text primary key,
+              peer_name text not null,
+              attempted_at integer not null,
+              ok integer not null,
+              latency_ms integer,
+              error text
+            );
+            insert into outbound_status values ('2', 'node-2', 1234, 1, 8, '');
+            """
+        )
+        legacy.commit()
+    finally:
+        legacy.close()
+
+    conn = protocol.connect_state(state_path)
+    try:
+        columns = {row["name"] for row in conn.execute("pragma table_info(outbound_status)")}
+        row = conn.execute("select succeeded_at from outbound_status where peer_id = '2'").fetchone()
+    finally:
+        conn.close()
+
+    assert "succeeded_at" in columns
+    assert row["succeeded_at"] == 1234
 
 
 def test_forwarded_heartbeats_expire_and_do_not_cycle(tmp_path):
@@ -188,6 +294,26 @@ def test_report_exposes_stale_last_known_without_forwarding_it(tmp_path):
     assert set(latest) == {"1", "3"}
     assert latest["3"]["observed_at"] == now - 400
 
+    receiver_config = agent_config(tmp_path, 2, [descriptor(1), descriptor(3)])
+    receiver_conn = protocol.connect_state(receiver_config["state_path"])
+    try:
+        merged = protocol.merge_sync_payload(
+            receiver_conn,
+            receiver_config,
+            {
+                "registry": [descriptor(1), descriptor(2), descriptor(3)],
+                "latest_records": [stale],
+                "records": [stale],
+            },
+            now,
+        )
+    finally:
+        receiver_conn.close()
+    receiver_report = protocol.build_report(receiver_config, now)
+    assert merged == 1
+    assert {record["node_id"] for record in receiver_report["records"]} == {"2"}
+    assert {record["node_id"] for record in receiver_report["latest_records"]} == {"2", "3"}
+
 
 def test_main_service_marks_one_missed_heartbeat_as_sync_delayed(tmp_path):
     now = int(time.time())
@@ -209,10 +335,10 @@ def test_main_service_marks_one_missed_heartbeat_as_sync_delayed(tmp_path):
         return {
             "node": {"node_id": source_id, "node_name": server["name"]},
             "registry": [descriptor(1), descriptor(2), descriptor(3)],
-            "records": [heartbeat(1, now - 10, ["1", source_id], 100)],
+            "records": [heartbeat(1, now - 10, ["1", "2"], 100)],
             "latest_records": [
-                heartbeat(2, now - HEARTBEAT_FRESH_SECONDS, ["2", source_id], 50),
-                heartbeat(3, now - HEARTBEAT_OFFLINE_SECONDS, ["3", source_id], 90),
+                heartbeat(2, now - HEARTBEAT_FRESH_SECONDS, ["2", "1"], 50),
+                heartbeat(3, now - HEARTBEAT_OFFLINE_SECONDS, ["3", "1"], 90),
             ],
             "_latency_ms": 12,
         }
@@ -240,6 +366,54 @@ def test_main_service_marks_one_missed_heartbeat_as_sync_delayed(tmp_path):
     assert current[3]["details"]["sync_delayed"] is False
 
 
+def test_main_service_does_not_mark_self_only_heartbeat_online(tmp_path):
+    now = int(time.time())
+    db_path = tmp_path / "ops-self-only.sqlite3"
+    conn = connect(db_path)
+    try:
+        init_db(conn)
+        for node_id in (1, 2):
+            conn.execute(
+                "insert into servers(name, hostname, login_user, heartbeat_enabled) values (?, ?, 'root', 1)",
+                (f"node-{node_id}", f"node-{node_id}.example"),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    def fetcher(server, _secret):
+        source_id = str(server["id"])
+        return {
+            "node": {"node_id": source_id, "node_name": server["name"]},
+            "registry": [descriptor(1), descriptor(2)],
+            "records": [
+                heartbeat(1, now - 10, ["1"], 100),
+                heartbeat(2, now - 20, ["2", "1"], 50),
+            ],
+        }
+
+    recorded = poll_mesh_once(
+        db_path,
+        "mesh-secret",
+        fetcher=fetcher,
+        sampled_at=now,
+        rng=random.Random(3),
+    )
+    by_id = {item["server_id"]: item for item in recorded}
+    assert by_id[1]["network_score"] == 0.0
+    assert by_id[1]["app_score"] is None
+    assert by_id[1]["direct_ok"] is False
+    assert by_id[2]["direct_ok"] is True
+
+    conn = connect(db_path)
+    try:
+        current = {item["server_id"]: item["current"] for item in mesh_health_history(conn, 3)["servers"]}
+    finally:
+        conn.close()
+    assert current[1]["details"]["visibility_missing"] is True
+    assert current[1]["details"]["external_visibility_confirmed"] is False
+
+
 def test_main_service_reads_all_nodes_from_one_random_report_node(tmp_path):
     now = int(time.time())
     db_path = tmp_path / "ops.sqlite3"
@@ -264,9 +438,9 @@ def test_main_service_reads_all_nodes_from_one_random_report_node(tmp_path):
             "node": {"node_id": source_id, "node_name": server["name"]},
             "registry": [descriptor(1), descriptor(2), descriptor(3)],
             "records": [
-                heartbeat(1, now - 10, ["1", source_id], 100),
-                heartbeat(2, now - 20, ["2", source_id], 50),
-                heartbeat(3, now - 30, ["3", source_id], 0),
+                heartbeat(1, now - 10, ["1", "2"], 100),
+                heartbeat(2, now - 20, ["2", "1"], 50),
+                heartbeat(3, now - 30, ["3", "1"], 0),
             ],
             "_latency_ms": 18,
         }
@@ -308,6 +482,18 @@ def test_deployment_monitors_custom_services_even_when_currently_stopped():
     assert _services(row) == ["app-a.service", "app-b.service"]
 
 
+def test_deployment_restarts_agent_and_runs_immediate_report():
+    commands = _activation_commands(9108)
+
+    assert "systemctl restart server-desk-heartbeat.service" in commands
+    assert "systemctl restart server-desk-heartbeat-report.timer" in commands
+    assert "systemctl start server-desk-heartbeat-report.service" in commands
+    assert all("enable --now" not in command for command in commands)
+    assert commands.index("systemctl restart server-desk-heartbeat.service") < commands.index(
+        "systemctl start server-desk-heartbeat-report.service"
+    )
+
+
 def test_signed_http_registration_round_trip(tmp_path):
     config_b = agent_config(tmp_path, 2, [])
     server = protocol.ThreadingHTTPServer(("127.0.0.1", 0), protocol.HeartbeatHandler)
@@ -331,10 +517,19 @@ def test_signed_http_registration_round_trip(tmp_path):
         ],
     )
     try:
-        results = protocol.send_once(config_a, startup=True, rng=random.Random(1))
+        first_sent_at = int(time.time())
+        results = protocol.send_once(config_a, startup=True, now=first_sent_at, rng=random.Random(1))
         assert len(results) == 1
         assert results[0]["ok"] is True
 
+        report_a = protocol.build_report(config_a, first_sent_at + 1)
+        assert report_a["self"]["seen_by"] == ["1", "2"]
+
+        refreshed = protocol.send_once(
+            config_a, now=first_sent_at + protocol.REPORT_INTERVAL_SECONDS + 1
+        )
+        assert len(refreshed) == 1
+        assert refreshed[0]["ok"] is True
         report_b = protocol.build_report(config_b)
         records = {record["node_id"]: record for record in report_b["records"]}
         assert set(records) == {"1", "2"}

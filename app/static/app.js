@@ -185,12 +185,13 @@ function meshHealthHtml(server) {
   const age = Math.max(0, Math.floor(Date.now() / 1000) - Number(current.sampled_at || 0));
   const stale = age > Number(state.meshHealth?.freshness_seconds || 300);
   const syncDelayed = Boolean(current.details?.sync_delayed);
+  const visibilityMissing = Boolean(current.details?.visibility_missing);
   const heartbeatAge = Math.max(0, Number(current.details?.heartbeat_age_seconds || 0));
   const networkPoints = sparklinePoints(samples, "network_score");
   const appPoints = sparklinePoints(samples, "app_score");
   const title = `心跳 ${meshScore(current.network_score)}，应用 ${meshScore(current.app_score)}，传播 ${current.peer_visible}/${current.peer_expected}`;
   return `
-    <div class="mesh-health ${stale ? "stale" : ""} ${syncDelayed ? "delayed" : ""}" title="${escapeHtml(title)}">
+    <div class="mesh-health ${stale ? "stale" : ""} ${syncDelayed ? "delayed" : ""} ${visibilityMissing ? "unconfirmed" : ""}" title="${escapeHtml(title)}">
       <svg class="mesh-sparkline" viewBox="0 0 148 40" role="img" aria-label="${escapeHtml(title)}">
         <line x1="3" y1="20" x2="145" y2="20" class="mesh-guide"></line>
         ${networkPoints ? `<polyline points="${networkPoints}" class="mesh-network-line"></polyline>` : ""}
@@ -202,7 +203,9 @@ function meshHealthHtml(server) {
       </div>
       ${stale
         ? '<small>样本已过期</small>'
-        : syncDelayed
+        : visibilityMissing
+          ? `<small>未被邻居确认 · ${current.peer_visible}/${current.peer_expected}</small>`
+          : syncDelayed
           ? `<small>同步延迟 ${Math.round(heartbeatAge)} 秒 · ${current.peer_visible}/${current.peer_expected}</small>`
           : `<small>${current.peer_visible}/${current.peer_expected} 个同伴可见</small>`}
     </div>`;
@@ -291,9 +294,11 @@ function renderDetail() {
   $("detailCheckedAt").textContent = formatDateTime(s.last_checked_at);
   $("detailConfigStatus").innerHTML = `${statusPill(s.config_status || "unknown", configLabel(s.config_status), "config")} ${escapeHtml(s.config_summary || "未检查")}`;
   const mesh = meshRecord(s.id)?.current;
-  const meshHeartbeat = mesh?.details?.sync_delayed
-    ? `同步延迟 ${Math.max(0, Math.round(Number(mesh.details?.heartbeat_age_seconds || 0)))} 秒`
-    : mesh?.direct_ok ? "心跳正常" : "心跳过期";
+  const meshHeartbeat = mesh?.details?.visibility_missing
+    ? "未被邻居确认"
+    : mesh?.details?.sync_delayed
+      ? `同步延迟 ${Math.max(0, Math.round(Number(mesh.details?.heartbeat_age_seconds || 0)))} 秒`
+      : mesh?.direct_ok ? "心跳正常" : "心跳过期";
   $("detailMeshNetwork").textContent = s.heartbeat_enabled && mesh
     ? `${meshHeartbeat}，传播 ${mesh.peer_visible}/${mesh.peer_expected}，报告源 ${mesh.details?.source_report_name || "无"}`
     : s.heartbeat_enabled ? "等待首个样本" : "未启用";

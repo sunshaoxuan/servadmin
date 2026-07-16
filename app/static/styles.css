@@ -431,6 +431,12 @@ label {
 .mesh-health.delayed:not(.stale) small {
   color: var(--amber);
 }
+.mesh-health.unconfirmed:not(.stale) .mesh-network-line {
+  stroke: var(--danger);
+}
+.mesh-health.unconfirmed:not(.stale) small {
+  color: var(--danger);
+}
 .mesh-sparkline {
   display: block;
   height: 40px;

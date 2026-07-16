@@ -134,13 +134,19 @@ def record_mesh_cycle(
         payload = _latest_payload(target_id, reports)
         observed_at = int(payload.get("observed_at") or 0) if payload else 0
         age = now - observed_at if observed_at else None
-        fresh = bool(payload and age is not None and -MAX_CLOCK_SKEW_SECONDS <= age < HEARTBEAT_FRESH_SECONDS)
-        active = bool(
+        timestamp_fresh = bool(
+            payload and age is not None and -MAX_CLOCK_SKEW_SECONDS <= age < HEARTBEAT_FRESH_SECONDS
+        )
+        timestamp_active = bool(
             payload and age is not None and -MAX_CLOCK_SKEW_SECONDS <= age < HEARTBEAT_OFFLINE_SECONDS
         )
-        sync_delayed = active and not fresh
         seen_by = {str(item) for item in (payload or {}).get("seen_by", []) if item}
         visible = min(expected_peers, len(seen_by - {target_id}))
+        visibility_confirmed = expected_peers == 0 or visible > 0
+        fresh = timestamp_fresh and visibility_confirmed
+        active = timestamp_active and visibility_confirmed
+        visibility_missing = timestamp_active and not visibility_confirmed
+        sync_delayed = active and not fresh
         app_score = payload.get("app_score") if active and payload else None
         if app_score is not None:
             app_score = max(0.0, min(100.0, float(app_score)))
@@ -151,6 +157,9 @@ def record_mesh_cycle(
             "observed_at": observed_at or None,
             "heartbeat_age_seconds": age,
             "heartbeat_fresh": fresh,
+            "heartbeat_timestamp_fresh": timestamp_fresh,
+            "external_visibility_confirmed": visibility_confirmed,
+            "visibility_missing": visibility_missing,
             "sync_delayed": sync_delayed,
             "offline_after_seconds": HEARTBEAT_OFFLINE_SECONDS,
             "seen_by": sorted(seen_by),

@@ -64,6 +64,8 @@ def _services(row) -> list[str]:
         and not str(item["name"]).startswith("user@")
     }
     return sorted(selected)
+
+
 def _deployment_rows(rows, all_ubuntu: bool, server_ids: list[int]):
     selected = [
         row
@@ -75,6 +77,18 @@ def _deployment_rows(rows, all_ubuntu: bool, server_ids: list[int]):
     return selected, list(mesh_rows.values())
 
 
+def _activation_commands(port: int) -> list[str]:
+    return [
+        "systemctl daemon-reload",
+        "systemctl enable server-desk-heartbeat.service server-desk-heartbeat-report.timer",
+        "systemctl restart server-desk-heartbeat.service",
+        "systemctl restart server-desk-heartbeat-report.timer",
+        "systemctl start server-desk-heartbeat-report.service",
+        "sleep 1",
+        "systemctl is-active --quiet server-desk-heartbeat.service",
+        "systemctl is-active --quiet server-desk-heartbeat-report.timer",
+        f"ss -ltn | grep -q ':{port} '",
+    ]
 
 
 def _connect(row, cipher) -> tuple[paramiko.SSHClient, str]:
@@ -165,17 +179,7 @@ def deploy_node(row, peers: list[dict[str, Any]], secret: str, port: int, cipher
                 "if command -v ufw >/dev/null 2>&1 && ufw status | grep -q '^Status: active'; then "
                 f"ufw allow {port}/tcp comment 'server-desk-heartbeat'; fi"
             )
-        install.extend(
-            [
-                "systemctl daemon-reload",
-                "systemctl enable --now server-desk-heartbeat.service",
-                "systemctl enable --now server-desk-heartbeat-report.timer",
-                "sleep 1",
-                "systemctl is-active --quiet server-desk-heartbeat.service",
-                "systemctl is-active --quiet server-desk-heartbeat-report.timer",
-                f"ss -ltn | grep -q ':{port} '",
-            ]
-        )
+        install.extend(_activation_commands(port))
         _run(client, "set -e\n" + "\n".join(install), row["login_user"], password, timeout=90)
         return {
             "server_id": row["id"],
