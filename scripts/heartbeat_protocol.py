@@ -318,6 +318,20 @@ def fresh_records(conn: sqlite3.Connection, now: int) -> list[dict[str, Any]]:
     return records
 
 
+def latest_records(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    records = []
+    rows = conn.execute(
+        "select payload_json, seen_by_json from heartbeat_records order by node_id"
+    ).fetchall()
+    for row in rows:
+        payload = json.loads(row["payload_json"] or "{}")
+        payload["seen_by"] = sorted(
+            {str(item) for item in json.loads(row["seen_by_json"] or "[]") if item}
+        )
+        records.append(payload)
+    return records
+
+
 def merge_sync_payload(
     conn: sqlite3.Connection,
     config: dict[str, Any],
@@ -355,6 +369,7 @@ def build_report(config: dict[str, Any], now: int | None = None) -> dict[str, An
         initialize_state(conn, config, current)
         self_payload = store_self_heartbeat(conn, config, current)
         records = fresh_records(conn, current)
+        latest = latest_records(conn)
         received = [
             {
                 "node_id": record["node_id"],
@@ -378,6 +393,7 @@ def build_report(config: dict[str, Any], now: int | None = None) -> dict[str, An
         "self": self_payload,
         "registry": registry,
         "records": records,
+        "latest_records": latest,
         "received": received,
         "outbound": outbound,
     }

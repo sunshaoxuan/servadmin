@@ -13,8 +13,10 @@ from .db import connect, init_db
 
 
 DEFAULT_HEARTBEAT_PORT = 9108
-DEFAULT_INTERVAL_SECONDS = 300
+DEFAULT_INTERVAL_SECONDS = 60
 HEARTBEAT_FRESH_SECONDS = 300
+HEARTBEAT_OFFLINE_SECONDS = 2 * HEARTBEAT_FRESH_SECONDS + DEFAULT_INTERVAL_SECONDS
+SYNC_DELAY_SCORE = 70.0
 MAX_CLOCK_SKEW_SECONDS = 650
 SAMPLE_RETENTION_SECONDS = 7 * 24 * 60 * 60
 
@@ -77,9 +79,10 @@ def _report_payloads(report: dict[str, Any]) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
     if isinstance(report.get("self"), dict):
         candidates.append(report["self"])
-    for record in report.get("records") or []:
-        if isinstance(record, dict):
-            candidates.append(record)
+    for key in ("records", "latest_records"):
+        for record in report.get(key) or []:
+            if isinstance(record, dict):
+                candidates.append(record)
     for received in report.get("received") or []:
         if isinstance(received, dict) and isinstance(received.get("payload"), dict):
             candidates.append(received["payload"])
@@ -132,17 +135,24 @@ def record_mesh_cycle(
         observed_at = int(payload.get("observed_at") or 0) if payload else 0
         age = now - observed_at if observed_at else None
         fresh = bool(payload and age is not None and -MAX_CLOCK_SKEW_SECONDS <= age < HEARTBEAT_FRESH_SECONDS)
+        active = bool(
+            payload and age is not None and -MAX_CLOCK_SKEW_SECONDS <= age < HEARTBEAT_OFFLINE_SECONDS
+        )
+        sync_delayed = active and not fresh
         seen_by = {str(item) for item in (payload or {}).get("seen_by", []) if item}
         visible = min(expected_peers, len(seen_by - {target_id}))
-        app_score = payload.get("app_score") if fresh and payload else None
+        app_score = payload.get("app_score") if active and payload else None
         if app_score is not None:
             app_score = max(0.0, min(100.0, float(app_score)))
-        network_score = 100.0 if fresh else 0.0
+        network_score = 100.0 if fresh else SYNC_DELAY_SCORE if sync_delayed else 0.0
         details = {
             "source_report_server_id": int(source_id) if source_id.isdigit() else None,
             "source_report_name": (source_report.get("node") or {}).get("node_name", ""),
             "observed_at": observed_at or None,
             "heartbeat_age_seconds": age,
+            "heartbeat_fresh": fresh,
+            "sync_delayed": sync_delayed,
+            "offline_after_seconds": HEARTBEAT_OFFLINE_SECONDS,
             "seen_by": sorted(seen_by),
             "registered": target_id in registry_ids,
             "report_errors": failures,
@@ -154,7 +164,7 @@ def record_mesh_cycle(
             bucket,
             network_score,
             app_score,
-            1 if fresh else 0,
+            1 if active else 0,
             direct_latency,
             visible,
             expected_peers,
@@ -183,7 +193,7 @@ def record_mesh_cycle(
                 "sampled_at": bucket,
                 "network_score": network_score,
                 "app_score": app_score,
-                "direct_ok": fresh,
+                "direct_ok": active,
                 "peer_visible": visible,
                 "peer_expected": expected_peers,
                 "source_report_server_id": details["source_report_server_id"],
@@ -260,5 +270,6 @@ def mesh_health_history(conn, hours: int = 3) -> dict[str, Any]:
         "window_hours": bounded_hours,
         "interval_seconds": DEFAULT_INTERVAL_SECONDS,
         "freshness_seconds": HEARTBEAT_FRESH_SECONDS,
+        "offline_after_seconds": HEARTBEAT_OFFLINE_SECONDS,
         "servers": result,
     }

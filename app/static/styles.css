@@ -425,6 +425,12 @@ label {
 .mesh-health.stale {
   opacity: 0.56;
 }
+.mesh-health.delayed:not(.stale) .mesh-network-line {
+  stroke: #d9822b;
+}
+.mesh-health.delayed:not(.stale) small {
+  color: var(--amber);
+}
 .mesh-sparkline {
   display: block;
   height: 40px;

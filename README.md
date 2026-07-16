@@ -12,7 +12,7 @@ Server Desk 是一个网页形式的服务器管理 APP，用于维护多台服�
 - 详情面板固定显示密码框，默认遮蔽，支持显示和复制
 - 密码读取、显示和复制使用加密凭据接口，并记录凭据查看审计
 - 设置页签提供异步应用和服务状态检测，覆盖 `server-desk`、`nginx`、`frps`、`xray` 等 systemd 服务，并解析 Nginx 代理应用做本机端口连通性检测；服务器列表、详情、详情服务页签和服务卡片使用绿、红、黄状态点辅助快速判断
-- Ubuntu 节点可部署分布式心跳 Agent。每台节点主动单向上报自身及 5 分钟内的新鲜心跳，通过注册表同步自动发现节点，主服务从随机报告节点读取全网节点和应用活性，不从 ccnode 对所有节点逐台发起网络探测
+- Ubuntu 节点可部署分布式心跳 Agent。每台节点主动单向上报自身及 5 分钟内的新鲜心跳，通过注册表同步自动发现节点；主服务每分钟从一个随机报告节点读取全网节点和应用活性，连续错过两轮心跳后判定离线。网络与应用活性均在节点本机采集，ccnode 只读取汇总报告
 - 服务器详情中的环境检测页签按当前节点触发系统环境体检，采集操作系统、主板 BIOS、虚拟化、运行时间、负载、CPU、GPU、内存、磁盘、块设备、网络、公网 IP、网络质量、TCP 策略、应用和服务端口信息，并生成类似 NodeQuality 风格的专业报告
 - SSH 检查和配置检查执行期间，详情按钮和行内按钮进入禁用加载态，并显示旋转图标，防止重复触发
 - Debian/Ubuntu 应用清单优先读取 dpkg 状态文件，并限制采样数量，避免慢速包管理命令阻塞整次配置检查
@@ -63,7 +63,7 @@ cd C:\workspace\server-admin-app
 ```bash
 OPS_MESH_ENABLED=1
 OPS_MESH_SECRET=<至少32字符的共享密钥>
-OPS_MESH_INTERVAL_SECONDS=300
+OPS_MESH_INTERVAL_SECONDS=60
 ```
 
 部署脚本从主服务环境文件读取数据库路径、凭据密钥和矩阵密钥。首次执行先检查目标列表，再部署所有环境检测结果为 Ubuntu 的有效节点：
@@ -79,6 +79,8 @@ OPS_MESH_INTERVAL_SECONDS=300
 ```
 
 新增 Ubuntu 节点时可使用 `--server-id <ID>`。脚本会把已有心跳节点作为启动种子，新节点启动后随机选择其中一个节点注册，随后通过单向报告传播到其余节点。Agent 使用 `9108/tcp`；`--configure-firewall` 会在启用 UFW 的主机上开放该端口，接口仍要求 HMAC 签名。
+
+Agent 只转发 300 秒内的新鲜记录。管理端每 60 秒读取一个随机报告节点，300 到 660 秒显示为同步延迟，超过 660 秒判定离线。这个离线窗口覆盖两次 5 分钟上报和 1 分钟调度余量，避免网络延迟造成瞬时误报。
 
 当前部署路径为 `https://ccnode.briconbric.com/server-desk/`。Nginx 使用 `/etc/letsencrypt/live/briconbric.com/fullchain.pem` 和 `/etc/letsencrypt/live/briconbric.com/privkey.pem` 的通用证书。
 

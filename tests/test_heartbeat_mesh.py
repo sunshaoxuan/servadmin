@@ -3,7 +3,13 @@ import threading
 import time
 
 from app.db import connect, init_db
-from app.mesh import mesh_health_history, poll_mesh_once
+from app.mesh import (
+    HEARTBEAT_FRESH_SECONDS,
+    HEARTBEAT_OFFLINE_SECONDS,
+    SYNC_DELAY_SCORE,
+    mesh_health_history,
+    poll_mesh_once,
+)
 from scripts import heartbeat_protocol as protocol
 from scripts.deploy_heartbeat_mesh import _deployment_rows, _services
 
@@ -159,6 +165,79 @@ def test_report_to_unseen_target_carries_fresh_relay(tmp_path):
 
     assert set(records) == {"1", "3"}
     assert records["3"]["seen_by"] == ["1", "2", "3"]
+
+
+def test_report_exposes_stale_last_known_without_forwarding_it(tmp_path):
+    now = 5_000
+    config = agent_config(tmp_path, 1, [descriptor(2), descriptor(3)])
+    conn = protocol.connect_state(config["state_path"])
+    try:
+        protocol.initialize_state(conn, config, now - 500)
+        stale = heartbeat(3, now - 400, ["3"])
+        assert protocol.merge_heartbeat_record(conn, config, stale, now - 390)
+        conn.commit()
+    finally:
+        conn.close()
+
+    outbound = protocol.prepare_report(config, descriptor(2), now)
+    assert {record["node_id"] for record in outbound["records"]} == {"1"}
+
+    report = protocol.build_report(config, now)
+    assert {record["node_id"] for record in report["records"]} == {"1"}
+    latest = {record["node_id"]: record for record in report["latest_records"]}
+    assert set(latest) == {"1", "3"}
+    assert latest["3"]["observed_at"] == now - 400
+
+
+def test_main_service_marks_one_missed_heartbeat_as_sync_delayed(tmp_path):
+    now = int(time.time())
+    db_path = tmp_path / "ops.sqlite3"
+    conn = connect(db_path)
+    try:
+        init_db(conn)
+        for node_id in (1, 2, 3):
+            conn.execute(
+                "insert into servers(name, hostname, login_user, heartbeat_enabled) values (?, ?, 'root', 1)",
+                (f"node-{node_id}", f"node-{node_id}.example"),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    def fetcher(server, _secret):
+        source_id = str(server["id"])
+        return {
+            "node": {"node_id": source_id, "node_name": server["name"]},
+            "registry": [descriptor(1), descriptor(2), descriptor(3)],
+            "records": [heartbeat(1, now - 10, ["1", source_id], 100)],
+            "latest_records": [
+                heartbeat(2, now - HEARTBEAT_FRESH_SECONDS, ["2", source_id], 50),
+                heartbeat(3, now - HEARTBEAT_OFFLINE_SECONDS, ["3", source_id], 90),
+            ],
+            "_latency_ms": 12,
+        }
+
+    recorded = poll_mesh_once(db_path, "mesh-secret", fetcher=fetcher, sampled_at=now)
+    by_id = {item["server_id"]: item for item in recorded}
+
+    assert by_id[1]["network_score"] == 100.0
+    assert by_id[1]["direct_ok"] is True
+    assert by_id[2]["network_score"] == SYNC_DELAY_SCORE
+    assert by_id[2]["app_score"] == 50.0
+    assert by_id[2]["direct_ok"] is True
+    assert by_id[3]["network_score"] == 0.0
+    assert by_id[3]["app_score"] is None
+    assert by_id[3]["direct_ok"] is False
+
+    conn = connect(db_path)
+    try:
+        history = mesh_health_history(conn, 3)
+    finally:
+        conn.close()
+    current = {item["server_id"]: item["current"] for item in history["servers"]}
+    assert current[2]["details"]["sync_delayed"] is True
+    assert current[2]["details"]["heartbeat_age_seconds"] == HEARTBEAT_FRESH_SECONDS
+    assert current[3]["details"]["sync_delayed"] is False
 
 
 def test_main_service_reads_all_nodes_from_one_random_report_node(tmp_path):
