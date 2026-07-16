@@ -107,15 +107,21 @@ def connect_state(path: str | Path) -> sqlite3.Connection:
         );
         """
     )
-    outbound_columns = {
-        str(row["name"]) for row in conn.execute("pragma table_info(outbound_status)").fetchall()
-    }
-    if "succeeded_at" not in outbound_columns:
-        conn.execute("alter table outbound_status add column succeeded_at integer")
-    conn.execute(
-        "update outbound_status set succeeded_at = attempted_at where succeeded_at is null and ok = 1"
-    )
-    conn.commit()
+    conn.execute("begin immediate")
+    try:
+        outbound_columns = {
+            str(row["name"]) for row in conn.execute("pragma table_info(outbound_status)").fetchall()
+        }
+        if "succeeded_at" not in outbound_columns:
+            conn.execute("alter table outbound_status add column succeeded_at integer")
+        conn.execute(
+            "update outbound_status set succeeded_at = attempted_at where succeeded_at is null and ok = 1"
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
     return conn
 
 

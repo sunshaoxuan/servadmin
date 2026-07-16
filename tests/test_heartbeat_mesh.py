@@ -227,6 +227,59 @@ def test_outbound_status_schema_migrates_successful_acknowledgements(tmp_path):
     assert row["succeeded_at"] == 1234
 
 
+def test_outbound_status_migration_is_serialized_between_agent_processes(tmp_path):
+    state_path = tmp_path / "concurrent-legacy-heartbeat.sqlite3"
+    legacy = sqlite3.connect(state_path)
+    try:
+        legacy.executescript(
+            """
+            pragma journal_mode = wal;
+            create table outbound_status (
+              peer_id text primary key,
+              peer_name text not null,
+              attempted_at integer not null,
+              ok integer not null,
+              latency_ms integer,
+              error text
+            );
+            """
+        )
+        legacy.commit()
+    finally:
+        legacy.close()
+
+    workers = 8
+    barrier = threading.Barrier(workers + 1)
+    errors = []
+
+    def migrate():
+        conn = None
+        try:
+            barrier.wait()
+            conn = protocol.connect_state(state_path)
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            if conn is not None:
+                conn.close()
+
+    threads = [threading.Thread(target=migrate) for _index in range(workers)]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    for thread in threads:
+        thread.join(timeout=15)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert errors == []
+    conn = protocol.connect_state(state_path)
+    try:
+        columns = {row["name"] for row in conn.execute("pragma table_info(outbound_status)")}
+    finally:
+        conn.close()
+    assert "succeeded_at" in columns
+
+
 def test_forwarded_heartbeats_expire_and_do_not_cycle(tmp_path):
     now = 3_000
     config = agent_config(tmp_path, 1, [descriptor(2), descriptor(3)])
