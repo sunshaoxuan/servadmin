@@ -162,24 +162,74 @@ function meshScore(value) {
   return Number.isFinite(Number(value)) ? `${Math.round(Number(value))}%` : "无数据";
 }
 
-function sparklinePoints(samples, field, width = 148, height = 40) {
-  const values = samples.filter(
-    (item) => item[field] !== null && item[field] !== undefined && Number.isFinite(Number(item[field])),
-  );
-  if (!values.length) return "";
-  const start = Number(samples[0]?.sampled_at || values[0].sampled_at);
-  const end = Math.max(start + 1, Number(samples[samples.length - 1]?.sampled_at || values[values.length - 1].sampled_at));
-  return values.map((item) => {
-    const x = 3 + ((Number(item.sampled_at) - start) / (end - start)) * (width - 6);
-    const y = 3 + ((100 - Number(item[field])) / 100) * (height - 6);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(" ");
+function meshTimeline() {
+  const end = Number(state.meshHealth?.generated_at || Math.floor(Date.now() / 1000));
+  const fallbackStart = end - Number(state.meshHealth?.window_hours || 3) * 60 * 60;
+  const start = Number(state.meshHealth?.window_started_at || fallbackStart);
+  return { start, end: Math.max(start + 1, end) };
+}
+
+function sparklineX(sampledAt, width = 148) {
+  const timeline = meshTimeline();
+  const ratio = Math.max(0, Math.min(1, (Number(sampledAt) - timeline.start) / (timeline.end - timeline.start)));
+  return 3 + ratio * (width - 6);
+}
+
+function failedMeshPollCycles() {
+  return (state.meshHealth?.poll_cycles || []).filter((item) => item.status === "failed");
+}
+
+function latestMeshPollCycle() {
+  const cycles = state.meshHealth?.poll_cycles || [];
+  return cycles.length ? cycles[cycles.length - 1] : null;
+}
+
+function sparklineSegments(samples, field, width = 148, height = 40) {
+  const failedTimes = failedMeshPollCycles().map((item) => Number(item.sampled_at));
+  const interval = Number(state.meshHealth?.interval_seconds || 60);
+  const segments = [];
+  let points = [];
+  let previousSampleAt = null;
+  const flush = () => {
+    if (points.length) segments.push(points.join(" "));
+    points = [];
+  };
+  for (const item of samples) {
+    const sampledAt = Number(item.sampled_at);
+    const rawValue = item[field];
+    const valid = rawValue !== null && rawValue !== undefined && Number.isFinite(Number(rawValue));
+    const crossesFailedCycle = previousSampleAt !== null
+      && failedTimes.some((failedAt) => failedAt > previousSampleAt && failedAt <= sampledAt);
+    const hasTimeGap = previousSampleAt !== null && sampledAt - previousSampleAt > interval * 1.5;
+    if (!valid || crossesFailedCycle || hasTimeGap) flush();
+    if (valid) {
+      const x = sparklineX(sampledAt, width);
+      const value = Math.max(0, Math.min(100, Number(rawValue)));
+      const y = 3 + ((100 - value) / 100) * (height - 6);
+      points.push(`${x.toFixed(1)},${y.toFixed(1)}`);
+    }
+    previousSampleAt = sampledAt;
+  }
+  flush();
+  return segments;
+}
+
+function meshCollectionFailureLines(width = 148, height = 40) {
+  return failedMeshPollCycles().map((item) => {
+    const x = sparklineX(item.sampled_at, width).toFixed(1);
+    return `<line x1="${x}" y1="3" x2="${x}" y2="${height - 3}" class="mesh-collection-failure"></line>`;
+  }).join("");
 }
 
 function meshHealthHtml(server) {
   if (!server.heartbeat_enabled) return '<div class="mesh-empty">未部署</div>';
   const record = meshRecord(server.id);
-  if (!record?.current) return '<div class="mesh-empty pending">等待首个样本</div>';
+  const latestCycle = latestMeshPollCycle();
+  if (!record?.current) {
+    return latestCycle?.status === "failed"
+      ? `<div class="mesh-empty collection-failed">采集异常 · 0/${latestCycle.attempted_sources} 报告源</div>`
+      : '<div class="mesh-empty pending">等待首个样本</div>';
+  }
   const samples = record.samples || [];
   const current = record.current;
   const age = Math.max(0, Math.floor(Date.now() / 1000) - Number(current.sampled_at || 0));
@@ -187,27 +237,34 @@ function meshHealthHtml(server) {
   const syncDelayed = Boolean(current.details?.sync_delayed);
   const visibilityMissing = Boolean(current.details?.visibility_missing);
   const heartbeatAge = Math.max(0, Number(current.details?.heartbeat_age_seconds || 0));
-  const networkPoints = sparklinePoints(samples, "network_score");
-  const appPoints = sparklinePoints(samples, "app_score");
-  const title = `心跳 ${meshScore(current.network_score)}，应用 ${meshScore(current.app_score)}，传播 ${current.peer_visible}/${current.peer_expected}`;
+  const networkScore = current.network_trend_score ?? current.network_score;
+  const networkSegments = sparklineSegments(samples, "network_trend_score");
+  const appSegments = sparklineSegments(samples, "app_score");
+  const collectionFailures = failedMeshPollCycles();
+  const collectionFailed = latestCycle?.status === "failed"
+    && Number(latestCycle.sampled_at) >= Number(current.sampled_at);
+  const failureNote = collectionFailures.length ? ` · 灰线 ${collectionFailures.length} 次采集异常` : "";
+  const statusText = collectionFailed
+    ? `采集异常 · 0/${latestCycle.attempted_sources} 报告源，沿用上次节点状态`
+    : visibilityMissing
+      ? `未被邻居确认 · ${current.peer_visible}/${current.peer_expected}`
+      : syncDelayed
+        ? `同步延迟 ${Math.round(heartbeatAge)} 秒 · ${current.peer_visible}/${current.peer_expected}${failureNote}`
+        : `${current.peer_visible}/${current.peer_expected} 个同伴可见${failureNote}`;
+  const title = `网络趋势 ${meshScore(networkScore)}，应用 ${meshScore(current.app_score)}，心跳年龄 ${Math.round(heartbeatAge)} 秒，传播 ${current.peer_visible}/${current.peer_expected}`;
   return `
-    <div class="mesh-health ${stale ? "stale" : ""} ${syncDelayed ? "delayed" : ""} ${visibilityMissing ? "unconfirmed" : ""}" title="${escapeHtml(title)}">
+    <div class="mesh-health ${stale ? "stale" : ""} ${syncDelayed ? "delayed" : ""} ${visibilityMissing ? "unconfirmed" : ""} ${collectionFailed ? "collection-failed" : ""}" title="${escapeHtml(title)}">
       <svg class="mesh-sparkline" viewBox="0 0 148 40" role="img" aria-label="${escapeHtml(title)}">
         <line x1="3" y1="20" x2="145" y2="20" class="mesh-guide"></line>
-        ${networkPoints ? `<polyline points="${networkPoints}" class="mesh-network-line"></polyline>` : ""}
-        ${appPoints ? `<polyline points="${appPoints}" class="mesh-app-line"></polyline>` : ""}
+        ${networkSegments.map((points) => `<polyline points="${points}" class="mesh-network-line"></polyline>`).join("")}
+        ${appSegments.map((points) => `<polyline points="${points}" class="mesh-app-line"></polyline>`).join("")}
+        ${meshCollectionFailureLines()}
       </svg>
       <div class="mesh-scores">
-        <span><i class="mesh-key network"></i>网络 ${meshScore(current.network_score)}</span>
+        <span><i class="mesh-key network"></i>网络 ${meshScore(networkScore)}</span>
         <span><i class="mesh-key apps"></i>应用 ${meshScore(current.app_score)}</span>
       </div>
-      ${stale
-        ? '<small>样本已过期</small>'
-        : visibilityMissing
-          ? `<small>未被邻居确认 · ${current.peer_visible}/${current.peer_expected}</small>`
-          : syncDelayed
-          ? `<small>同步延迟 ${Math.round(heartbeatAge)} 秒 · ${current.peer_visible}/${current.peer_expected}</small>`
-          : `<small>${current.peer_visible}/${current.peer_expected} 个同伴可见</small>`}
+      ${stale && !collectionFailed ? '<small>样本已过期</small>' : `<small>${statusText}</small>`}
     </div>`;
 }
 
@@ -294,14 +351,21 @@ function renderDetail() {
   $("detailCheckedAt").textContent = formatDateTime(s.last_checked_at);
   $("detailConfigStatus").innerHTML = `${statusPill(s.config_status || "unknown", configLabel(s.config_status), "config")} ${escapeHtml(s.config_summary || "未检查")}`;
   const mesh = meshRecord(s.id)?.current;
+  const latestPollCycle = latestMeshPollCycle();
+  const meshCollectionFailed = latestPollCycle?.status === "failed"
+    && (!mesh || Number(latestPollCycle.sampled_at) >= Number(mesh.sampled_at));
   const meshHeartbeat = mesh?.details?.visibility_missing
     ? "未被邻居确认"
     : mesh?.details?.sync_delayed
       ? `同步延迟 ${Math.max(0, Math.round(Number(mesh.details?.heartbeat_age_seconds || 0)))} 秒`
       : mesh?.direct_ok ? "心跳正常" : "心跳过期";
-  $("detailMeshNetwork").textContent = s.heartbeat_enabled && mesh
-    ? `${meshHeartbeat}，传播 ${mesh.peer_visible}/${mesh.peer_expected}，报告源 ${mesh.details?.source_report_name || "无"}`
-    : s.heartbeat_enabled ? "等待首个样本" : "未启用";
+  $("detailMeshNetwork").textContent = !s.heartbeat_enabled
+    ? "未启用"
+    : meshCollectionFailed
+      ? `采集异常，0/${latestPollCycle.attempted_sources} 报告源${mesh ? "，沿用上次节点状态" : ""}`
+      : mesh
+        ? `${meshHeartbeat}，网络趋势 ${meshScore(mesh.network_trend_score ?? mesh.network_score)}，传播 ${mesh.peer_visible}/${mesh.peer_expected}，报告源 ${mesh.details?.source_report_name || "无"}`
+        : "等待首个样本";
   $("detailMeshApps").textContent = s.heartbeat_enabled && mesh
     ? meshScore(mesh.app_score)
     : s.heartbeat_enabled ? "等待首个样本" : "未启用";

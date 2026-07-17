@@ -196,8 +196,8 @@ def test_static_and_index_are_not_cached():
         response = client.get("/")
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
-        assert "static/styles.css?v=20260716-mesh4" in response.text
-        assert "static/app.js?v=20260716-mesh4" in response.text
+        assert "static/styles.css?v=20260717-mesh5" in response.text
+        assert "static/app.js?v=20260717-mesh5" in response.text
         assert 'id="detailCredential"' in response.text
         assert 'id="settingsView"' in response.text
         assert 'id="showRetiredToggle"' in response.text
@@ -215,6 +215,7 @@ def test_static_and_index_are_not_cached():
         assert "action-spinner" in response.text
         assert "mesh-sparkline" in response.text
         assert "mesh-network-line" in response.text
+        assert "mesh-collection-failure" in response.text
         assert "mesh-health.unconfirmed" in response.text
 
         response = client.get("/static/app.js")
@@ -223,11 +224,13 @@ def test_static_and_index_are_not_cached():
         assert "runningActions" in response.text
         assert "ti-loader-2 action-spinner" in response.text
         assert "meshHealthHtml" in response.text
+        assert "sparklineSegments" in response.text
         assert "source_report_name" in response.text
         assert "syncDelayed" in response.text
         assert "同步延迟" in response.text
         assert "visibilityMissing" in response.text
         assert "未被邻居确认" in response.text
+        assert "采集异常" in response.text
         assert 'value === null || value === undefined' in response.text
     finally:
         os.unlink(db_path)
@@ -553,6 +556,8 @@ def test_mesh_health_requires_login_and_returns_protocol_window():
         assert body["interval_seconds"] == 60
         assert body["freshness_seconds"] == 300
         assert body["offline_after_seconds"] == 660
+        assert "window_started_at" in body
+        assert body["poll_cycles"] == []
         assert body["servers"] == []
     finally:
         os.unlink(db_path)

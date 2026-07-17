@@ -437,6 +437,9 @@ label {
 .mesh-health.unconfirmed:not(.stale) small {
   color: var(--danger);
 }
+.mesh-health.collection-failed small {
+  color: #697875;
+}
 .mesh-sparkline {
   display: block;
   height: 40px;
@@ -453,6 +456,12 @@ label {
   stroke: #d8e2df;
   stroke-dasharray: 3 3;
   stroke-width: 1;
+}
+.mesh-collection-failure {
+  stroke: #7d8b88;
+  stroke-dasharray: 2 2;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
 }
 .mesh-network-line {
   stroke: #16835f;
@@ -486,9 +495,13 @@ label {
   color: var(--muted);
   display: block;
   font-size: 11px;
+  line-height: 1.3;
 }
 .mesh-empty.pending {
   color: var(--amber);
+}
+.mesh-empty.collection-failed {
+  color: #697875;
 }
 .server-host {
   display: block;

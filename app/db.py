@@ -81,6 +81,15 @@ create table if not exists mesh_health_samples (
 
 create index if not exists idx_mesh_health_server_time
 on mesh_health_samples(server_id, sampled_at);
+
+create table if not exists mesh_poll_cycles (
+  sampled_at integer primary key,
+  status text not null,
+  attempted_sources integer not null default 0,
+  successful_sources integer not null default 0,
+  source_server_ids_json text not null default '[]',
+  errors_json text not null default '{}'
+);
 """
 
 SERVER_MIGRATIONS = {

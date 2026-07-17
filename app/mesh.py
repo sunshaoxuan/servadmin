@@ -22,6 +22,40 @@ SAMPLE_RETENTION_SECONDS = 7 * 24 * 60 * 60
 MAX_REPORT_BYTES = 512 * 1024
 REPORT_SAMPLE_SIZE = 3
 REPORT_MAX_ATTEMPTS = 6
+TREND_FRESHNESS_WEIGHT = 0.75
+TREND_VISIBILITY_WEIGHT = 1.0 - TREND_FRESHNESS_WEIGHT
+
+
+def network_trend_score(
+    status_score: float | int | None,
+    heartbeat_age_seconds: float | int | None,
+    peer_visible: int,
+    peer_expected: int,
+) -> float:
+    raw_score = float(status_score or 0)
+    if raw_score <= 0:
+        return 0.0
+    if heartbeat_age_seconds is None:
+        return round(max(0.0, min(100.0, raw_score)), 1)
+    age = max(0.0, float(heartbeat_age_seconds))
+    if age < HEARTBEAT_FRESH_SECONDS:
+        freshness_score = 100.0 - 30.0 * (age / HEARTBEAT_FRESH_SECONDS)
+    else:
+        delayed_window = max(1, HEARTBEAT_OFFLINE_SECONDS - HEARTBEAT_FRESH_SECONDS)
+        freshness_score = 70.0 * max(
+            0.0,
+            1.0 - ((age - HEARTBEAT_FRESH_SECONDS) / delayed_window),
+        )
+    visibility_score = (
+        100.0
+        if peer_expected <= 0
+        else 100.0 * max(0, min(peer_expected, peer_visible)) / peer_expected
+    )
+    combined = (
+        TREND_FRESHNESS_WEIGHT * freshness_score
+        + TREND_VISIBILITY_WEIGHT * visibility_score
+    )
+    return round(max(0.0, min(100.0, combined)), 1)
 
 
 def request_signature(secret: str, method: str, path: str, timestamp: str, body: bytes = b"") -> str:
@@ -151,6 +185,49 @@ def record_mesh_cycle(
         and item.get("membership_status", "active") == "active"
     }
     report_source_ids = [int(item) for item in reports if item.isdigit()]
+    attempted_sources = len(reports) + len(failures)
+    cycle_status = "ok" if reports else "failed" if attempted_sources else "idle"
+    conn.execute(
+        """
+        insert into mesh_poll_cycles(
+          sampled_at, status, attempted_sources, successful_sources,
+          source_server_ids_json, errors_json
+        ) values (?, ?, ?, ?, ?, ?)
+        on conflict(sampled_at) do update set
+          status=case
+            when excluded.successful_sources >= mesh_poll_cycles.successful_sources
+            then excluded.status else mesh_poll_cycles.status end,
+          attempted_sources=case
+            when excluded.successful_sources >= mesh_poll_cycles.successful_sources
+            then excluded.attempted_sources else mesh_poll_cycles.attempted_sources end,
+          successful_sources=max(mesh_poll_cycles.successful_sources, excluded.successful_sources),
+          source_server_ids_json=case
+            when excluded.successful_sources >= mesh_poll_cycles.successful_sources
+            then excluded.source_server_ids_json else mesh_poll_cycles.source_server_ids_json end,
+          errors_json=case
+            when excluded.successful_sources >= mesh_poll_cycles.successful_sources
+            then excluded.errors_json else mesh_poll_cycles.errors_json end
+        """,
+        (
+            bucket,
+            cycle_status,
+            attempted_sources,
+            len(reports),
+            json.dumps(report_source_ids, separators=(",", ":")),
+            json.dumps(failures, ensure_ascii=False, separators=(",", ":")),
+        ),
+    )
+    if not reports:
+        conn.execute(
+            "delete from mesh_poll_cycles where sampled_at < ?",
+            (now - SAMPLE_RETENTION_SECONDS,),
+        )
+        conn.execute(
+            "delete from mesh_health_samples where sampled_at < ?",
+            (now - SAMPLE_RETENTION_SECONDS,),
+        )
+        conn.commit()
+        return []
     recorded: list[dict[str, Any]] = []
 
     for server in server_rows:
@@ -237,6 +314,7 @@ def record_mesh_cycle(
             }
         )
     conn.execute("delete from mesh_health_samples where sampled_at < ?", (now - SAMPLE_RETENTION_SECONDS,))
+    conn.execute("delete from mesh_poll_cycles where sampled_at < ?", (now - SAMPLE_RETENTION_SECONDS,))
     conn.commit()
     return recorded
 
@@ -281,6 +359,82 @@ def mesh_health_history(conn, hours: int = 3) -> dict[str, Any]:
     servers = conn.execute(
         "select id, name from servers where heartbeat_enabled = 1 and is_retired = 0 order by is_starred desc, id"
     ).fetchall()
+    poll_cycles = []
+    explicit_cycle_times = set()
+    for row in conn.execute(
+        """
+        select sampled_at, status, attempted_sources, successful_sources,
+               source_server_ids_json, errors_json
+        from mesh_poll_cycles
+        where sampled_at >= ?
+        order by sampled_at
+        """,
+        (cutoff,),
+    ).fetchall():
+        sampled_at = int(row["sampled_at"])
+        explicit_cycle_times.add(sampled_at)
+        poll_cycles.append(
+            {
+                "sampled_at": sampled_at,
+                "status": row["status"],
+                "attempted_sources": int(row["attempted_sources"]),
+                "successful_sources": int(row["successful_sources"]),
+                "source_server_ids": json.loads(row["source_server_ids_json"] or "[]"),
+                "report_errors": json.loads(row["errors_json"] or "{}"),
+                "inferred": False,
+            }
+        )
+
+    legacy_buckets: dict[int, list[dict[str, Any]]] = {}
+    for row in conn.execute(
+        """
+        select m.sampled_at, m.network_score, m.app_score, m.details_json
+        from mesh_health_samples m
+        join servers s on s.id = m.server_id
+        where m.sampled_at >= ? and s.heartbeat_enabled = 1 and s.is_retired = 0
+        order by m.sampled_at
+        """,
+        (cutoff,),
+    ).fetchall():
+        sampled_at = int(row["sampled_at"])
+        if sampled_at in explicit_cycle_times:
+            continue
+        legacy_buckets.setdefault(sampled_at, []).append(
+            {
+                "network_score": row["network_score"],
+                "app_score": row["app_score"],
+                "details": json.loads(row["details_json"] or "{}"),
+            }
+        )
+
+    for sampled_at, samples in legacy_buckets.items():
+        errors: dict[str, str] = {}
+        for sample in samples:
+            errors.update(sample["details"].get("report_errors") or {})
+        is_failed_collection = bool(errors) and all(
+            float(sample["network_score"] or 0) == 0.0
+            and sample["app_score"] is None
+            and not sample["details"].get("source_report_server_ids")
+            and sample["details"].get("source_report_server_id") is None
+            for sample in samples
+        )
+        if is_failed_collection:
+            poll_cycles.append(
+                {
+                    "sampled_at": sampled_at,
+                    "status": "failed",
+                    "attempted_sources": len(errors),
+                    "successful_sources": 0,
+                    "source_server_ids": [],
+                    "report_errors": errors,
+                    "inferred": True,
+                }
+            )
+
+    poll_cycles.sort(key=lambda item: item["sampled_at"])
+    failed_cycle_times = {
+        int(item["sampled_at"]) for item in poll_cycles if item["status"] == "failed"
+    }
     result = []
     for server in servers:
         samples = []
@@ -295,8 +449,16 @@ def mesh_health_history(conn, hours: int = 3) -> dict[str, Any]:
             (server["id"], cutoff),
         ).fetchall():
             sample = dict(row)
+            if int(sample["sampled_at"]) in failed_cycle_times:
+                continue
             sample["direct_ok"] = bool(sample["direct_ok"])
             sample["details"] = json.loads(sample.pop("details_json") or "{}")
+            sample["network_trend_score"] = network_trend_score(
+                sample["network_score"],
+                sample["details"].get("heartbeat_age_seconds"),
+                int(sample["peer_visible"]),
+                int(sample["peer_expected"]),
+            )
             samples.append(sample)
         result.append(
             {
@@ -308,9 +470,11 @@ def mesh_health_history(conn, hours: int = 3) -> dict[str, Any]:
         )
     return {
         "generated_at": int(time.time()),
+        "window_started_at": cutoff,
         "window_hours": bounded_hours,
         "interval_seconds": DEFAULT_INTERVAL_SECONDS,
         "freshness_seconds": HEARTBEAT_FRESH_SECONDS,
         "offline_after_seconds": HEARTBEAT_OFFLINE_SECONDS,
+        "poll_cycles": poll_cycles,
         "servers": result,
     }

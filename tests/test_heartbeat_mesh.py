@@ -14,6 +14,7 @@ from app.mesh import (
     HEARTBEAT_OFFLINE_SECONDS,
     SYNC_DELAY_SCORE,
     mesh_health_history,
+    network_trend_score,
     poll_mesh_once,
     _latest_payload,
 )
@@ -572,6 +573,202 @@ def test_main_service_merges_three_random_report_nodes(tmp_path):
         set(item["current"]["details"]["source_report_server_ids"]) == expected_sources
         for item in history["servers"]
     )
+    assert history["poll_cycles"][-1]["status"] == "ok"
+    assert history["poll_cycles"][-1]["successful_sources"] == 3
+
+
+def test_all_report_sources_failed_records_collection_gap_without_node_outages(tmp_path):
+    now = int(time.time())
+    db_path = tmp_path / "ops-collection-gap.sqlite3"
+    conn = connect(db_path)
+    try:
+        init_db(conn)
+        for node_id in (1, 2):
+            conn.execute(
+                "insert into servers(name, hostname, login_user, heartbeat_enabled) values (?, ?, 'root', 1)",
+                (f"node-{node_id}", f"node-{node_id}.example"),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    def healthy_fetcher(server, _secret):
+        source_id = str(server["id"])
+        return {
+            "node": {"node_id": source_id, "node_name": server["name"]},
+            "registry": [descriptor(1), descriptor(2)],
+            "records": [
+                heartbeat(1, now - 10, ["1", "2"], 100),
+                heartbeat(2, now - 20, ["2", "1"], 100),
+            ],
+        }
+
+    first = poll_mesh_once(
+        db_path,
+        "mesh-secret",
+        fetcher=healthy_fetcher,
+        sampled_at=now,
+        sample_size=2,
+    )
+    assert len(first) == 2
+
+    def unavailable_fetcher(server, _secret):
+        raise TimeoutError(f"node {server['id']} timed out")
+
+    failed = poll_mesh_once(
+        db_path,
+        "mesh-secret",
+        fetcher=unavailable_fetcher,
+        sampled_at=now + 60,
+        sample_size=2,
+    )
+    assert failed == []
+
+    conn = connect(db_path)
+    try:
+        history = mesh_health_history(conn, 3)
+    finally:
+        conn.close()
+
+    assert [item["status"] for item in history["poll_cycles"][-2:]] == ["ok", "failed"]
+    failed_cycle = history["poll_cycles"][-1]
+    assert failed_cycle["attempted_sources"] == 2
+    assert failed_cycle["successful_sources"] == 0
+    assert set(failed_cycle["report_errors"]) == {"1", "2"}
+    assert all(len(item["samples"]) == 1 for item in history["servers"])
+    assert all(item["current"]["direct_ok"] is True for item in history["servers"])
+    assert all(item["current"]["sampled_at"] < failed_cycle["sampled_at"] for item in history["servers"])
+
+
+def test_successful_poll_wins_over_failed_retry_in_same_minute(tmp_path):
+    now = int(time.time())
+    db_path = tmp_path / "ops-same-minute.sqlite3"
+    conn = connect(db_path)
+    try:
+        init_db(conn)
+        for node_id in (1, 2):
+            conn.execute(
+                "insert into servers(name, hostname, login_user, heartbeat_enabled) values (?, ?, 'root', 1)",
+                (f"node-{node_id}", f"node-{node_id}.example"),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    def healthy_fetcher(server, _secret):
+        return {
+            "node": {"node_id": str(server["id"]), "node_name": server["name"]},
+            "registry": [descriptor(1), descriptor(2)],
+            "records": [
+                heartbeat(1, now - 10, ["1", "2"], 100),
+                heartbeat(2, now - 20, ["2", "1"], 100),
+            ],
+        }
+
+    poll_mesh_once(
+        db_path,
+        "mesh-secret",
+        fetcher=healthy_fetcher,
+        sampled_at=now,
+        sample_size=2,
+    )
+
+    def unavailable_fetcher(server, _secret):
+        raise TimeoutError(f"node {server['id']} timed out")
+
+    assert poll_mesh_once(
+        db_path,
+        "mesh-secret",
+        fetcher=unavailable_fetcher,
+        sampled_at=now + 1,
+        sample_size=2,
+    ) == []
+
+    conn = connect(db_path)
+    try:
+        history = mesh_health_history(conn, 3)
+    finally:
+        conn.close()
+
+    assert history["poll_cycles"][-1]["status"] == "ok"
+    assert history["poll_cycles"][-1]["successful_sources"] == 2
+    assert all(item["current"]["direct_ok"] is True for item in history["servers"])
+
+
+def test_history_infers_legacy_collection_failure_and_hides_false_node_dip(tmp_path):
+    now = int(time.time())
+    first_bucket = now - (now % 60)
+    failed_bucket = first_bucket + 60
+    db_path = tmp_path / "ops-legacy-gap.sqlite3"
+    conn = connect(db_path)
+    try:
+        init_db(conn)
+        for node_id in (1, 2):
+            cursor = conn.execute(
+                "insert into servers(name, hostname, login_user, heartbeat_enabled) values (?, ?, 'root', 1)",
+                (f"node-{node_id}", f"node-{node_id}.example"),
+            )
+            server_id = cursor.lastrowid
+            healthy_details = {
+                "source_report_server_id": 1,
+                "source_report_server_ids": [1],
+                "heartbeat_age_seconds": 10,
+                "report_errors": {},
+            }
+            failed_details = {
+                "source_report_server_id": None,
+                "source_report_server_ids": [],
+                "heartbeat_age_seconds": None,
+                "report_errors": {"1": "timed out", "2": "timed out"},
+            }
+            conn.execute(
+                """
+                insert into mesh_health_samples(
+                  server_id, sampled_at, network_score, app_score, direct_ok,
+                  peer_visible, peer_expected, details_json
+                ) values (?, ?, 100, 100, 1, 1, 1, ?)
+                """,
+                (server_id, first_bucket, json.dumps(healthy_details)),
+            )
+            conn.execute(
+                """
+                insert into mesh_health_samples(
+                  server_id, sampled_at, network_score, app_score, direct_ok,
+                  peer_visible, peer_expected, details_json
+                ) values (?, ?, 0, null, 0, 0, 1, ?)
+                """,
+                (server_id, failed_bucket, json.dumps(failed_details)),
+            )
+        conn.commit()
+        history = mesh_health_history(conn, 3)
+    finally:
+        conn.close()
+
+    assert history["poll_cycles"] == [
+        {
+            "sampled_at": failed_bucket,
+            "status": "failed",
+            "attempted_sources": 2,
+            "successful_sources": 0,
+            "source_server_ids": [],
+            "report_errors": {"1": "timed out", "2": "timed out"},
+            "inferred": True,
+        }
+    ]
+    assert all([sample["sampled_at"] for sample in item["samples"]] == [first_bucket] for item in history["servers"])
+    assert all(item["current"]["direct_ok"] is True for item in history["servers"])
+
+
+def test_network_trend_score_uses_freshness_and_peer_visibility():
+    fewer_witnesses = network_trend_score(100.0, 0, 2, 6)
+    more_witnesses = network_trend_score(100.0, 0, 4, 6)
+    older_heartbeat = network_trend_score(100.0, 240, 4, 6)
+    delayed = network_trend_score(SYNC_DELAY_SCORE, HEARTBEAT_FRESH_SECONDS, 6, 6)
+
+    assert 0 < fewer_witnesses < more_witnesses < 100
+    assert older_heartbeat < more_witnesses
+    assert 0 < delayed < 100
+    assert network_trend_score(0.0, None, 0, 6) == 0.0
 
 
 def test_deployment_monitors_custom_services_even_when_currently_stopped():
