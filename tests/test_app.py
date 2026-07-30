@@ -404,6 +404,9 @@ root_disk_used_percent=25
 root_inode_used_percent=4
 failed_service_count=0
 ntp_synchronized=yes
+heartbeat_timer=active
+heartbeat_timer_substate=waiting
+heartbeat_timer_last_trigger=Thu 2026-07-30 03:05:28 UTC
 permitrootlogin=no
 passwordauthentication=no
 firewall=active
@@ -485,6 +488,9 @@ def test_quality_report_scores_dimensions_and_mesh_evidence():
             "permitrootlogin": "no",
             "passwordauthentication": "no",
             "firewall": "active",
+            "heartbeat_timer": "active",
+            "heartbeat_timer_substate": "waiting",
+            "heartbeat_timer_last_trigger": "Thu 2026-07-30 03:05:28 UTC",
         },
         "failed_services": [],
     }
@@ -509,6 +515,48 @@ def test_quality_report_scores_dimensions_and_mesh_evidence():
     assert quality["status"] == "ok"
     assert quality["findings"] == []
     assert {item["id"] for item in quality["dimensions"]} == {"access", "system", "network", "services", "security", "heartbeat"}
+
+
+def test_quality_report_detects_elapsed_heartbeat_timer():
+    from app.main import build_quality_report
+
+    row = {"ssh_key_path": "/key.pem", "credential_encrypted": "", "heartbeat_enabled": 1}
+    report = {
+        "cpu_count": "2",
+        "runtime": {"load_average": "0.1 0.1 0.1"},
+        "memory_detail": {"mem_total_kb": "1000 kB", "mem_available_kb": "900 kB"},
+        "network": {
+            "addresses": ["192.0.2.2"],
+            "lines": ["default via 192.0.2.1", "dns=1.1.1.1"],
+            "quality": ["cloudflare http=200", "google http=204", "microsoft http=200"],
+        },
+        "quality_diagnostics": {
+            "root_disk_used_percent": "10",
+            "root_inode_used_percent": "2",
+            "failed_service_count": "0",
+            "ntp_synchronized": "yes",
+            "permitrootlogin": "no",
+            "passwordauthentication": "no",
+            "firewall": "active",
+            "heartbeat_timer": "active",
+            "heartbeat_timer_substate": "elapsed",
+            "heartbeat_timer_last_trigger": "Mon 2026-07-27 19:23:42 UTC",
+        },
+    }
+    mesh = {
+        "sample_count": 30,
+        "confirmed_count": 30,
+        "confirmed_rate": 1.0,
+        "latest": {"peer_visible": 3, "peer_expected": 7, "details": {"external_visibility_confirmed": True}},
+    }
+
+    quality = build_quality_report(row, "ok", report, [{"name": "ssh.service"}], mesh, {"ok": True, "detail": "ok"})
+
+    heartbeat = next(item for item in quality["dimensions"] if item["id"] == "heartbeat")
+    timer_check = next(item for item in heartbeat["checks"] if item["id"] == "heartbeat_timer_schedule")
+    assert timer_check["status"] == "fail"
+    assert timer_check["points"] == 0
+    assert "active / elapsed" in timer_check["evidence"]
 
 
 def test_quality_check_endpoint_records_report_and_audit(monkeypatch):

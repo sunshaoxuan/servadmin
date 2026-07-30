@@ -10,3 +10,7 @@
 | 自动化验证 | `tests/test_app.py` | 脚本可编译、评分、接口、审计与静态资源 |
 | 生产样本 | 生产 Server Desk 数据库的 CCNODE-MAIN 最近心跳样本，只读查询 | 0/7 与 3/7 相邻出现，应用分保持 100 |
 | 真实节点采集 | CCNODE-MAIN SSH 只读体检 | 新增诊断字段可在真实 Linux 主机解析 |
+| 三小时矩阵对比 | 生产 `mesh_health_samples` 与 `mesh_poll_cycles` 只读聚合 | CCNODE 独有 86 次未确认和 76 次翻转，主采集周期均成功 |
+| CCNODE systemd 状态 | Agent、上报 timer 与 journal 只读查询 | Agent 无重启，timer 为 active / elapsed 且最近触发停在重启前 |
+| 正常节点对照 | Riven Gate 与 AWS 节点 timer 只读查询 | 正常 timer 为 active / waiting 且最近触发持续更新 |
+| boot 证据 | `uptime`、`last reboot`、`journalctl --list-boots` | 2026-07-27 出现新 boot，上一轮日志缺少正常关机序列 |

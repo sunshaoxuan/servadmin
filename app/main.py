@@ -387,6 +387,9 @@ printf 'failed_service_count=%s\n' "$(run_timeout 5 sh -c 'systemctl --failed --
 printf 'ntp_synchronized=%s\n' "$(run_timeout 5 timedatectl show -p NTPSynchronized --value 2>/dev/null || true)"
 printf 'heartbeat_service=%s\n' "$(run_timeout 5 systemctl is-active server-desk-heartbeat.service 2>/dev/null || true)"
 printf 'heartbeat_timer=%s\n' "$(run_timeout 5 systemctl is-active server-desk-heartbeat-report.timer 2>/dev/null || true)"
+printf 'heartbeat_timer_substate=%s\n' "$(run_timeout 5 systemctl show server-desk-heartbeat-report.timer -p SubState --value 2>/dev/null || true)"
+printf 'heartbeat_timer_last_trigger=%s\n' "$(run_timeout 5 systemctl show server-desk-heartbeat-report.timer -p LastTriggerUSec --value 2>/dev/null || true)"
+printf 'heartbeat_timer_next_trigger=%s\n' "$(run_timeout 5 systemctl show server-desk-heartbeat-report.timer -p NextElapseUSecRealtime --value 2>/dev/null || true)"
 if command -v sshd >/dev/null 2>&1; then
   run_timeout 5 sshd -T 2>/dev/null | awk '/^(permitrootlogin|passwordauthentication|pubkeyauthentication) / {print $1 "=" $2}'
 fi
@@ -610,6 +613,9 @@ print(f"failed_service_count={failed_count}")
 print(f"ntp_synchronized={run('timedatectl show -p NTPSynchronized --value 2>/dev/null', 5)}")
 print(f"heartbeat_service={run('systemctl is-active server-desk-heartbeat.service 2>/dev/null', 5)}")
 print(f"heartbeat_timer={run('systemctl is-active server-desk-heartbeat-report.timer 2>/dev/null', 5)}")
+print(f"heartbeat_timer_substate={run('systemctl show server-desk-heartbeat-report.timer -p SubState --value 2>/dev/null', 5)}")
+print(f"heartbeat_timer_last_trigger={run('systemctl show server-desk-heartbeat-report.timer -p LastTriggerUSec --value 2>/dev/null', 5)}")
+print(f"heartbeat_timer_next_trigger={run('systemctl show server-desk-heartbeat-report.timer -p NextElapseUSecRealtime --value 2>/dev/null', 5)}")
 if shutil.which("sshd"):
     print_lines(run("sshd -T 2>/dev/null | awk '/^(permitrootlogin|passwordauthentication|pubkeyauthentication) / {print $1 \"=\" $2}'", 5), 3)
 if shutil.which("ufw"):
@@ -1104,13 +1110,25 @@ def build_quality_report(
     if row["heartbeat_enabled"]:
         latest = mesh_evidence.get("latest") or {}
         latest_details = latest.get("details") or {}
+        latest_available = bool(latest)
         direct_ok = heartbeat_probe.get("ok")
         externally_confirmed = bool(latest_details.get("external_visibility_confirmed"))
         rate = mesh_evidence.get("confirmed_rate")
+        timer_state = str(diagnostics.get("heartbeat_timer") or "").lower()
+        timer_substate = str(diagnostics.get("heartbeat_timer_substate") or "").lower()
+        timer_ok = timer_state == "active" and timer_substate == "waiting"
+        timer_known = bool(timer_state or timer_substate)
+        timer_evidence = f"{timer_state or 'unknown'} / {timer_substate or 'unknown'}"
+        if diagnostics.get("heartbeat_timer_last_trigger"):
+            timer_evidence += f"，最近触发 {diagnostics['heartbeat_timer_last_trigger']}"
+        probe_evidence = str(heartbeat_probe.get("detail") or "无结果")
+        if heartbeat_probe.get("latency_ms") is not None:
+            probe_evidence += f"，{heartbeat_probe['latency_ms']} ms"
         heartbeat_checks = [
-            _quality_check("heartbeat_direct", "心跳 Agent 直连", "pass" if direct_ok is True else "fail" if direct_ok is False else "info", 4 if direct_ok is True else 0 if direct_ok is False else 2, 4, f"{heartbeat_probe.get('detail', '无结果')} {heartbeat_probe.get('latency_ms', '')}ms".strip(), "检查 Agent 服务、端口监听、防火墙和签名配置。"),
-            _quality_check("heartbeat_latest", "最新邻居确认", "pass" if externally_confirmed else "fail", 3 if externally_confirmed else 0, 3, f"传播 {latest.get('peer_visible', 0)}/{latest.get('peer_expected', 0)}", "检查节点到邻居的 9108/tcp 双向连通和报告定时器。"),
+            _quality_check("heartbeat_direct", "心跳 Agent 直连", "pass" if direct_ok is True else "fail" if direct_ok is False else "info", 3 if direct_ok is True else 0 if direct_ok is False else 1, 3, probe_evidence, "检查 Agent 服务、端口监听、防火墙和签名配置。"),
+            _quality_check("heartbeat_latest", "最新邻居确认", "pass" if externally_confirmed else "fail" if latest_available else "info", 2 if externally_confirmed else 0 if latest_available else 1, 2, f"传播 {latest.get('peer_visible', 0)}/{latest.get('peer_expected', 0)}" if latest_available else "暂无样本", "检查节点到邻居的 9108/tcp 双向连通和报告定时器。"),
             _quality_check("heartbeat_window", "近期邻居确认率", "pass" if rate is not None and rate >= 0.8 else "warn" if rate is not None and rate >= 0.5 else "fail" if rate is not None else "info", 3 if rate is not None and rate >= 0.8 else 2 if rate is not None and rate >= 0.5 else 0 if rate is not None else 1, 3, f"{mesh_evidence.get('confirmed_count', 0)}/{mesh_evidence.get('sample_count', 0)} 个样本，{round(rate * 100)}%" if rate is not None else "暂无样本", "结合失败报告源和邻居可见列表排查间歇性传播。"),
+            _quality_check("heartbeat_timer_schedule", "主动上报定时器", "pass" if timer_ok else "fail" if timer_known else "info", 2 if timer_ok else 0 if timer_known else 1, 2, timer_evidence, "定时器应为 active / waiting；若为 elapsed，应恢复调度并核对重启后的首次触发。"),
         ]
     else:
         heartbeat_checks = [_quality_check("heartbeat_disabled", "分布式心跳", "info", 10, 10, "该节点未启用分布式心跳")]
