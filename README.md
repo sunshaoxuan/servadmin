@@ -93,6 +93,8 @@ Agent V2 依据邻居版本水位发送最多 64 条增量记录，正常周期�
 
 生产目录应保持为 Git 工作树。`server-desk-git-sync.timer` 每 5 分钟检查 `origin/main`，发现新提交后会先执行数据库加密备份，再停止服务、快进更新、安装依赖、运行测试并启动服务。
 
+服务启动后，发布脚本会在最多 30 秒内逐秒检查 `/api/health`。应用完成启动即判定发布成功，超时才记录失败，避免固定等待时间短于实际启动耗时造成假告警。
+
 ```bash
 install -m 0755 scripts/server_desk_git_sync.sh /opt/server-desk/scripts/server_desk_git_sync.sh
 install -m 0755 scripts/server_desk_backup.sh /opt/server-desk/scripts/server_desk_backup.sh

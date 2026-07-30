@@ -3,7 +3,7 @@
 ## 自动化测试
 
 - `tests/test_app.py`：16 项通过。
-- 全量测试：49 项通过。
+- 全量测试：50 项通过。
 - Python 模块编译通过。
 - 前端 JavaScript 语法检查通过。
 
@@ -25,3 +25,9 @@
 - 验收截图：`environment-quality-report-detail.png`。
 - 使用 CCNODE-MAIN 真实只读输出再次验收，页面明确显示“主动上报定时器 active / elapsed”异常，控制台错误和警告数量为 0。
 - 心跳原因截图：`ccnode-heartbeat-timer-diagnosis.png`。
+
+## 生产发布
+
+- 首次发布在健康检查阶段出现假失败，原因是固定等待 2 秒，应用在第 3 秒完成启动。
+- 生产服务随后进入 active，健康接口返回成功。
+- 发布脚本改为最多 30 秒逐秒探测健康接口，并增加自动化检查。

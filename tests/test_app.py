@@ -1,6 +1,7 @@
 import os
 import socket
 import tempfile
+from pathlib import Path
 
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
@@ -20,6 +21,14 @@ def make_client():
     main.CREDENTIAL_KEY = os.environ["OPS_CREDENTIAL_KEY"]
     main.bootstrap()
     return TestClient(main.app), db_file.name
+
+
+def test_git_sync_waits_for_application_health():
+    script = (Path(__file__).parents[1] / "scripts" / "server_desk_git_sync.sh").read_text(encoding="utf-8")
+
+    assert "for _attempt in $(seq 1 30)" in script
+    assert "health endpoint did not become ready within 30 seconds" in script
+    assert "sleep 2" not in script
 
 
 def test_login_create_reveal_and_audit():

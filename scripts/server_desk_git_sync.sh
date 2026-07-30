@@ -71,8 +71,18 @@ trap - EXIT
 systemctl is-active --quiet "$SERVICE_NAME"
 
 if [[ -f "$APP_ENV" ]]; then
-  sleep 2
-  curl -fsS http://127.0.0.1:8090/api/health >/dev/null
+  health_ok=0
+  for _attempt in $(seq 1 30); do
+    if curl -fsS http://127.0.0.1:8090/api/health >/dev/null; then
+      health_ok=1
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$health_ok" -ne 1 ]]; then
+    echo "health endpoint did not become ready within 30 seconds" >&2
+    exit 1
+  fi
 fi
 
 echo "updated $SERVICE_NAME from $before to $after"
