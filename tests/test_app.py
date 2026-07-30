@@ -196,8 +196,8 @@ def test_static_and_index_are_not_cached():
         response = client.get("/")
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
-        assert "static/styles.css?v=20260717-mesh5" in response.text
-        assert "static/app.js?v=20260717-mesh5" in response.text
+        assert "static/styles.css?v=20260730-quality1" in response.text
+        assert "static/app.js?v=20260730-quality1" in response.text
         assert 'id="detailCredential"' in response.text
         assert 'id="settingsView"' in response.text
         assert 'id="showRetiredToggle"' in response.text
@@ -205,6 +205,7 @@ def test_static_and_index_are_not_cached():
         assert 'data-detail-tab="environment"' in response.text
         assert 'id="is_retired"' in response.text
         assert 'id="heartbeat_enabled"' in response.text
+        assert 'id="qualityCheckBtn"' in response.text
         assert 'id="detailMeshNetwork"' in response.text
         assert 'id="environmentView"' not in response.text
         assert 'id="runAllEnvironmentBtn"' not in response.text
@@ -217,6 +218,7 @@ def test_static_and_index_are_not_cached():
         assert "mesh-network-line" in response.text
         assert "mesh-collection-failure" in response.text
         assert "mesh-health.unconfirmed" in response.text
+        assert "quality-dimensions" in response.text
 
         response = client.get("/static/app.js")
         assert response.status_code == 200
@@ -231,6 +233,8 @@ def test_static_and_index_are_not_cached():
         assert "visibilityMissing" in response.text
         assert "未被邻居确认" in response.text
         assert "采集异常" in response.text
+        assert "qualityReportHtml" in response.text
+        assert 'runServerAction(s.id, "quality-check")' in response.text
         assert 'value === null || value === undefined' in response.text
     finally:
         os.unlink(db_path)
@@ -272,6 +276,10 @@ def test_retired_servers_cannot_run_checks():
         assert response.json()["detail"] == "server is retired"
 
         response = client.post(f"/api/servers/{body['id']}/inspect")
+        assert response.status_code == 409
+        assert response.json()["detail"] == "server is retired"
+
+        response = client.post(f"/api/servers/{body['id']}/quality-check")
         assert response.status_code == 409
         assert response.json()["detail"] == "server is retired"
     finally:
@@ -391,6 +399,15 @@ __SECTION__services
 nginx.service\trunning\tNginx
 __SECTION__ports
 LISTEN 0 511 0.0.0.0:80 0.0.0.0:* users:(("nginx",pid=1,fd=6))
+__SECTION__quality_diagnostics
+root_disk_used_percent=25
+root_inode_used_percent=4
+failed_service_count=0
+ntp_synchronized=yes
+permitrootlogin=no
+passwordauthentication=no
+firewall=active
+__SECTION__failed_services
 """
 
     status, summary, report, apps, services = build_config_report(output)
@@ -411,6 +428,8 @@ LISTEN 0 511 0.0.0.0:80 0.0.0.0:* users:(("nginx",pid=1,fd=6))
     assert report["network"]["tcp"]["congestion_control"] == "bbr"
     assert report["external_service_count"] == 1
     assert report["health_score"] == 100
+    assert report["quality_diagnostics"]["root_disk_used_percent"] == "25"
+    assert report["failed_services"] == []
     assert apps[0]["category"] == "custom"
     assert any(service["external"] for service in services)
 
@@ -430,8 +449,131 @@ def test_inspection_script_bounds_slow_inventory_commands():
     assert "run_timeout 10 systemctl list-units" in INSPECTION_SCRIPT
     assert "run_timeout 10 ss -lntup" in INSPECTION_SCRIPT
     assert 'section("network_quality")' in PYTHON_INSPECTION_SCRIPT
+    assert 'section("quality_diagnostics")' in PYTHON_INSPECTION_SCRIPT
+    assert 'section("failed_services")' in PYTHON_INSPECTION_SCRIPT
+    assert '__SECTION__quality_diagnostics' in INSPECTION_SCRIPT
     assert "/var/lib/dpkg/status" in PYTHON_INSPECTION_SCRIPT
     compile(PYTHON_INSPECTION_SCRIPT, "<remote-inspection>", "exec")
+
+
+def test_quality_report_scores_dimensions_and_mesh_evidence():
+    from app.main import build_quality_report
+
+    row = {
+        "ssh_key_path": "/etc/server-desk/ssh/key.pem",
+        "credential_encrypted": "",
+        "heartbeat_enabled": 1,
+    }
+    report = {
+        "cpu_count": "4",
+        "runtime": {"load_average": "0.40 0.30 0.20"},
+        "memory_detail": {"mem_total_kb": "8000000 kB", "mem_available_kb": "6000000 kB"},
+        "network": {
+            "addresses": ["192.0.2.10"],
+            "lines": ["addresses=192.0.2.10", "default via 192.0.2.1", "dns=1.1.1.1"],
+            "quality": [
+                "cloudflare http=200 total=0.05",
+                "google http=204 total=0.06",
+                "microsoft http=200 total=0.08",
+            ],
+        },
+        "quality_diagnostics": {
+            "root_disk_used_percent": "20",
+            "root_inode_used_percent": "5",
+            "failed_service_count": "0",
+            "ntp_synchronized": "yes",
+            "permitrootlogin": "no",
+            "passwordauthentication": "no",
+            "firewall": "active",
+        },
+        "failed_services": [],
+    }
+    mesh_evidence = {
+        "sample_count": 10,
+        "confirmed_count": 9,
+        "confirmed_rate": 0.9,
+        "latest": {"peer_visible": 3, "peer_expected": 7, "details": {"external_visibility_confirmed": True}},
+    }
+    quality = build_quality_report(
+        row,
+        "ok",
+        report,
+        [{"name": "nginx.service"}],
+        mesh_evidence,
+        {"ok": True, "status": "ok", "detail": "签名报告读取成功", "latency_ms": 5},
+    )
+
+    assert quality["version"] == 2
+    assert quality["score"] == 100
+    assert quality["grade"] == "A"
+    assert quality["status"] == "ok"
+    assert quality["findings"] == []
+    assert {item["id"] for item in quality["dimensions"]} == {"access", "system", "network", "services", "security", "heartbeat"}
+
+
+def test_quality_check_endpoint_records_report_and_audit(monkeypatch):
+    from app import main
+
+    client, db_path = make_client()
+    monkeypatch.setattr(
+        main,
+        "run_server_inspection",
+        lambda _row, _password="": (
+            "ok",
+            "采集完成",
+            {
+                "hostname": "quality-node",
+                "kernel": "Linux 6.1",
+                "cpu_count": "2",
+                "runtime": {"load_average": "0.1 0.1 0.1"},
+                "memory_detail": {"mem_total_kb": "1000 kB", "mem_available_kb": "800 kB"},
+                "network": {"addresses": ["127.0.0.1"], "lines": ["default via 127.0.0.1", "dns=1.1.1.1"], "quality": []},
+                "quality_diagnostics": {"root_disk_used_percent": "10", "root_inode_used_percent": "10", "failed_service_count": "0", "ntp_synchronized": "yes"},
+                "failed_services": [],
+            },
+            [],
+            [{"name": "ssh.service"}],
+        ),
+    )
+    try:
+        assert client.post("/api/login", json={"username": "admin", "password": "admin-pass"}).status_code == 200
+        response = client.post(
+            "/api/servers",
+            json={
+                "name": "Quality Node",
+                "hostname": "quality-node",
+                "ipv4": "127.0.0.1",
+                "provider": "Test",
+                "region": "Local",
+                "login_user": "root",
+                "auth_type": "key",
+                "ssh_host": "127.0.0.1",
+                "ssh_key_path": "/tmp/test-key",
+                "tags": [],
+            },
+        )
+        server_id = response.json()["id"]
+        response = client.post(f"/api/servers/{server_id}/quality-check")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["config_report"]["quality_report"]["version"] == 2
+        assert body["config_summary"].endswith("项需要关注")
+        audits = client.get("/api/audit").json()
+        assert "quality_check" in [item["action"] for item in audits]
+
+        monkeypatch.setattr(
+            main,
+            "run_server_inspection",
+            lambda _row, _password="": ("error", "SSH timeout", {"error": "SSH timeout"}, [], []),
+        )
+        response = client.post(f"/api/servers/{server_id}/quality-check")
+        assert response.status_code == 200
+        failed_report = response.json()["config_report"]
+        assert failed_report["collection_error"] == "SSH timeout"
+        assert "error" not in failed_report
+        assert failed_report["quality_report"]["dimensions"][0]["checks"][0]["status"] == "fail"
+    finally:
+        os.unlink(db_path)
 
 
 def test_paramiko_inspection_reports_blank_timeout(monkeypatch):
@@ -481,12 +623,14 @@ Linux remote-node 6.1.0 x86_64 GNU/Linux
 """
         stderr = ""
 
-    def fake_run(command, capture_output, text, timeout):
+    def fake_run(command, capture_output, text, encoding, errors, timeout):
         calls.append(
             {
                 "command": command,
                 "capture_output": capture_output,
                 "text": text,
+                "encoding": encoding,
+                "errors": errors,
                 "timeout": timeout,
             }
         )
@@ -517,6 +661,8 @@ Linux remote-node 6.1.0 x86_64 GNU/Linux
     assert "ops@192.0.2.55" in command
     assert command[-1] == main.INSPECTION_SCRIPT
     assert calls[0]["timeout"] == 45
+    assert calls[0]["encoding"] == "utf-8"
+    assert calls[0]["errors"] == "replace"
 
 
 def test_services_status_requires_login_and_returns_shape():

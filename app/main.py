@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 import paramiko
 
 from .db import connect, init_db, row_to_server
-from .mesh import DEFAULT_INTERVAL_SECONDS, mesh_health_history, poll_mesh_once
+from .mesh import DEFAULT_INTERVAL_SECONDS, fetch_peer_report, mesh_health_history, poll_mesh_once
 from .security import CredentialCipher, SessionCodec, hash_password, verify_password
 
 
@@ -380,6 +380,27 @@ if command -v ss >/dev/null 2>&1; then
 elif command -v netstat >/dev/null 2>&1; then
   run_timeout 10 netstat -lntup 2>/dev/null | tail -n +3 | head -120
 fi
+echo "__SECTION__quality_diagnostics"
+printf 'root_disk_used_percent=%s\n' "$(df -P / 2>/dev/null | awk 'NR==2 {gsub(/%/, "", $5); print $5}')"
+printf 'root_inode_used_percent=%s\n' "$(df -Pi / 2>/dev/null | awk 'NR==2 {gsub(/%/, "", $5); print $5}')"
+printf 'failed_service_count=%s\n' "$(run_timeout 5 sh -c 'systemctl --failed --type=service --no-legend --no-pager 2>/dev/null | sed "/^[[:space:]]*$/d" | wc -l | tr -d " "' || true)"
+printf 'ntp_synchronized=%s\n' "$(run_timeout 5 timedatectl show -p NTPSynchronized --value 2>/dev/null || true)"
+printf 'heartbeat_service=%s\n' "$(run_timeout 5 systemctl is-active server-desk-heartbeat.service 2>/dev/null || true)"
+printf 'heartbeat_timer=%s\n' "$(run_timeout 5 systemctl is-active server-desk-heartbeat-report.timer 2>/dev/null || true)"
+if command -v sshd >/dev/null 2>&1; then
+  run_timeout 5 sshd -T 2>/dev/null | awk '/^(permitrootlogin|passwordauthentication|pubkeyauthentication) / {print $1 "=" $2}'
+fi
+if command -v ufw >/dev/null 2>&1; then
+  printf 'firewall=%s\n' "$(run_timeout 5 ufw status 2>/dev/null | sed -n '1s/^Status: //p')"
+elif command -v firewall-cmd >/dev/null 2>&1; then
+  printf 'firewall=%s\n' "$(run_timeout 5 firewall-cmd --state 2>/dev/null || true)"
+elif command -v nft >/dev/null 2>&1; then
+  printf 'firewall=%s\n' "$(run_timeout 5 sh -c 'nft list ruleset 2>/dev/null | grep -q . && echo active' || true)"
+else
+  printf 'firewall=unavailable\n'
+fi
+echo "__SECTION__failed_services"
+run_timeout 5 systemctl --failed --type=service --no-legend --no-pager 2>/dev/null | head -20 || true
 """
 
 
@@ -580,6 +601,28 @@ if shutil.which("ss"):
     print_lines(run("ss -lntup 2>/dev/null | tail -n +2 | head -120", 10), 120)
 elif shutil.which("netstat"):
     print_lines(run("netstat -lntup 2>/dev/null | tail -n +3 | head -120", 10), 120)
+
+section("quality_diagnostics")
+print("root_disk_used_percent=" + run("df -P / 2>/dev/null | awk 'NR==2 {gsub(/%/, \"\", $5); print $5}'", 5))
+print("root_inode_used_percent=" + run("df -Pi / 2>/dev/null | awk 'NR==2 {gsub(/%/, \"\", $5); print $5}'", 5))
+failed_count = run("systemctl --failed --type=service --no-legend --no-pager 2>/dev/null | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' '", 5)
+print(f"failed_service_count={failed_count}")
+print(f"ntp_synchronized={run('timedatectl show -p NTPSynchronized --value 2>/dev/null', 5)}")
+print(f"heartbeat_service={run('systemctl is-active server-desk-heartbeat.service 2>/dev/null', 5)}")
+print(f"heartbeat_timer={run('systemctl is-active server-desk-heartbeat-report.timer 2>/dev/null', 5)}")
+if shutil.which("sshd"):
+    print_lines(run("sshd -T 2>/dev/null | awk '/^(permitrootlogin|passwordauthentication|pubkeyauthentication) / {print $1 \"=\" $2}'", 5), 3)
+if shutil.which("ufw"):
+    print("firewall=" + run("ufw status 2>/dev/null | sed -n '1s/^Status: //p'", 5))
+elif shutil.which("firewall-cmd"):
+    print(f"firewall={run('firewall-cmd --state 2>/dev/null', 5)}")
+elif shutil.which("nft"):
+    print("firewall=" + run("nft list ruleset 2>/dev/null | grep -q . && echo active", 5))
+else:
+    print("firewall=unavailable")
+
+section("failed_services")
+print_lines(run("systemctl --failed --type=service --no-legend --no-pager 2>/dev/null | head -20", 5), 20)
 '''
 
 
@@ -817,6 +860,8 @@ def build_config_report(output: str) -> tuple[str, str, dict[str, Any], list[dic
     public_ip = parse_key_values(sections.get("public_ip", []))
     network_quality = report_lines(sections.get("network_quality", []), 40)
     tcp = parse_key_values(sections.get("tcp", []))
+    quality_diagnostics = parse_key_values(sections.get("quality_diagnostics", []))
+    failed_services = report_lines(sections.get("failed_services", []), 20)
     disk_lines = report_lines(sections.get("disk", []), 12)
     block_devices = report_lines(sections.get("block_devices", []), 40)
     external_services = [service for service in services if service.get("external")]
@@ -856,6 +901,8 @@ def build_config_report(output: str) -> tuple[str, str, dict[str, Any], list[dic
             "tcp": tcp,
         },
         "external_service_count": len(external_services),
+        "quality_diagnostics": quality_diagnostics,
+        "failed_services": failed_services,
         "health_score": health_score,
         "report_sections": {
             "runtime": report_lines(sections.get("runtime", [])),
@@ -870,6 +917,8 @@ def build_config_report(output: str) -> tuple[str, str, dict[str, Any], list[dic
             "network_quality": network_quality,
             "tcp": report_lines(sections.get("tcp", [])),
             "ports": report_lines(sections.get("ports", []), 30),
+            "quality_diagnostics": report_lines(sections.get("quality_diagnostics", [])),
+            "failed_services": failed_services,
         },
     }
     status = "ok" if report["kernel"] else "warning"
@@ -880,6 +929,214 @@ def build_config_report(output: str) -> tuple[str, str, dict[str, Any], list[dic
         summary_parts.append(f"内存 {report['memory']}")
     summary = "，".join(summary_parts)
     return status, summary, report, apps, services
+
+
+def _number(value: Any) -> float | None:
+    match = re.search(r"-?\d+(?:\.\d+)?", str(value or ""))
+    return float(match.group()) if match else None
+
+
+def _quality_check(
+    check_id: str,
+    label: str,
+    status: str,
+    points: int,
+    max_points: int,
+    evidence: str,
+    recommendation: str = "",
+) -> dict[str, Any]:
+    return {
+        "id": check_id,
+        "label": label,
+        "status": status,
+        "points": points,
+        "max_points": max_points,
+        "evidence": evidence[:500],
+        "recommendation": recommendation[:500],
+    }
+
+
+def _threshold_check(
+    check_id: str,
+    label: str,
+    value: float | None,
+    warning_at: float,
+    failure_at: float,
+    max_points: int,
+    unit: str = "%",
+) -> dict[str, Any]:
+    if value is None:
+        return _quality_check(check_id, label, "info", max_points // 2, max_points, "目标机未返回该指标", "确认目标机具备标准 Linux 诊断命令。")
+    evidence = f"{value:g}{unit}"
+    if value >= failure_at:
+        return _quality_check(check_id, label, "fail", 0, max_points, evidence, f"将该指标降至 {failure_at:g}{unit} 以下并复查。")
+    if value >= warning_at:
+        return _quality_check(check_id, label, "warn", max_points // 2, max_points, evidence, f"持续观察并将该指标控制在 {warning_at:g}{unit} 以下。")
+    return _quality_check(check_id, label, "pass", max_points, max_points, evidence)
+
+
+def mesh_quality_evidence(conn, server_id: int, limit: int = 30) -> dict[str, Any]:
+    rows = conn.execute(
+        """
+        select sampled_at, network_score, app_score, direct_ok, peer_visible, peer_expected, details_json
+        from mesh_health_samples where server_id = ? order by sampled_at desc limit ?
+        """,
+        (server_id, limit),
+    ).fetchall()
+    samples = []
+    for row in rows:
+        item = dict(row)
+        try:
+            item["details"] = json.loads(item.pop("details_json") or "{}")
+        except json.JSONDecodeError:
+            item["details"] = {}
+        samples.append(item)
+    confirmed = sum(1 for item in samples if item["details"].get("external_visibility_confirmed"))
+    return {
+        "sample_count": len(samples),
+        "confirmed_count": confirmed,
+        "confirmed_rate": round(confirmed / len(samples), 3) if samples else None,
+        "latest": samples[0] if samples else None,
+    }
+
+
+def probe_heartbeat_agent(row) -> dict[str, Any]:
+    if not row["heartbeat_enabled"]:
+        return {"status": "disabled", "ok": True, "detail": "未启用分布式心跳"}
+    if not MESH_ENABLED:
+        return {"status": "unavailable", "ok": None, "detail": "主服务未启用心跳签名探测"}
+    try:
+        report = fetch_peer_report(dict(row), MESH_SECRET, timeout=3.0)
+        return {
+            "status": "ok",
+            "ok": True,
+            "detail": "签名报告读取成功",
+            "latency_ms": int(report.get("_latency_ms") or 0),
+        }
+    except Exception as exc:
+        detail = str(exc).strip()[:240] or exc.__class__.__name__
+        return {"status": "error", "ok": False, "detail": detail}
+
+
+def build_quality_report(
+    row,
+    inspection_status: str,
+    report: dict[str, Any],
+    services: list[dict[str, Any]],
+    mesh_evidence: dict[str, Any],
+    heartbeat_probe: dict[str, Any],
+) -> dict[str, Any]:
+    diagnostics = report.get("quality_diagnostics") or {}
+    network_lines = report.get("network", {}).get("lines") or []
+    quality_lines = report.get("network", {}).get("quality") or []
+    dimensions: list[dict[str, Any]] = []
+
+    access_checks = [
+        _quality_check(
+            "ssh_inspection",
+            "SSH 登录与远程采集",
+            "pass" if inspection_status != "error" else "fail",
+            10 if inspection_status != "error" else 0,
+            10,
+            "远程采集成功" if inspection_status != "error" else report.get("error", "远程采集失败"),
+            "核对 SSH 地址、端口、凭据和目标机访问控制。",
+        )
+    ]
+    auth_ready = bool(row["ssh_key_path"] or row["credential_encrypted"])
+    access_checks.append(
+        _quality_check("auth_material", "登录资料完整性", "pass" if auth_ready else "warn", 5 if auth_ready else 2, 5, "已保存认证资料" if auth_ready else "未发现密钥路径或加密凭据", "补齐可用的登录资料并复查。")
+    )
+    dimensions.append({"id": "access", "name": "访问链路", "checks": access_checks})
+
+    disk_used = _number(diagnostics.get("root_disk_used_percent"))
+    inode_used = _number(diagnostics.get("root_inode_used_percent"))
+    total_kb = _number((report.get("memory_detail") or {}).get("mem_total_kb"))
+    available_kb = _number((report.get("memory_detail") or {}).get("mem_available_kb"))
+    memory_used = 100 * (1 - available_kb / total_kb) if total_kb and available_kb is not None else None
+    load_one = _number((report.get("runtime") or {}).get("load_average"))
+    cpu_count = _number(report.get("cpu_count"))
+    normalized_load = 100 * load_one / cpu_count if load_one is not None and cpu_count else None
+    ntp = str(diagnostics.get("ntp_synchronized") or "").lower()
+    system_checks = [
+        _threshold_check("root_disk", "根分区使用率", disk_used, 80, 90, 7),
+        _threshold_check("root_inode", "根分区 inode 使用率", inode_used, 80, 90, 4),
+        _threshold_check("memory", "内存使用率", memory_used, 85, 95, 5),
+        _threshold_check("load", "单核归一化负载", normalized_load, 100, 150, 5),
+        _quality_check("clock", "系统时间同步", "pass" if ntp == "yes" else "warn" if ntp == "no" else "info", 4 if ntp == "yes" else 1 if ntp == "no" else 2, 4, ntp or "未返回同步状态", "启用可靠的 NTP 时间同步并确认偏差。"),
+    ]
+    dimensions.append({"id": "system", "name": "系统资源", "checks": system_checks})
+
+    addresses = report.get("network", {}).get("addresses") or []
+    has_route = any("default" in line for line in network_lines)
+    has_dns = any(line.startswith("dns=") for line in network_lines)
+    endpoint_lines = [line for line in quality_lines if re.match(r"^(cloudflare|google|microsoft) ", line)]
+    endpoints_ok = sum(1 for line in endpoint_lines if re.search(r"http=[234]\d\d", line))
+    outbound_status = "pass" if endpoints_ok == 3 else "warn" if endpoints_ok else "fail"
+    outbound_points = 12 if endpoints_ok == 3 else 8 if endpoints_ok == 2 else 4 if endpoints_ok == 1 else 0
+    network_checks = [
+        _quality_check("addresses", "本机地址", "pass" if addresses else "fail", 3 if addresses else 0, 3, " ".join(addresses) or "未发现地址"),
+        _quality_check("default_route", "默认路由", "pass" if has_route else "fail", 2 if has_route else 0, 2, "已发现默认路由" if has_route else "未发现默认路由"),
+        _quality_check("dns", "DNS 配置", "pass" if has_dns else "warn", 3 if has_dns else 1, 3, "已发现 DNS 服务器" if has_dns else "未发现 DNS 服务器"),
+        _quality_check("outbound_https", "外网 HTTPS 探测", outbound_status, outbound_points, 12, f"{endpoints_ok}/3 个目标成功", "检查 DNS、默认路由、出站策略和 TLS 时间。"),
+    ]
+    dimensions.append({"id": "network", "name": "网络质量", "checks": network_checks})
+
+    failed_count = int(_number(diagnostics.get("failed_service_count")) or len(report.get("failed_services") or []))
+    service_checks = [
+        _quality_check("failed_services", "失败的 systemd 服务", "pass" if failed_count == 0 else "fail", 10 if failed_count == 0 else 0, 10, f"{failed_count} 个失败服务", "查看失败服务日志，修复后重新体检。"),
+        _quality_check("running_services", "运行服务清单", "pass" if services else "info", 5 if services else 2, 5, f"采集到 {len(services)} 个运行或监听服务"),
+    ]
+    dimensions.append({"id": "services", "name": "服务状态", "checks": service_checks})
+
+    root_policy = str(diagnostics.get("permitrootlogin") or "unknown").lower()
+    password_policy = str(diagnostics.get("passwordauthentication") or "unknown").lower()
+    firewall = str(diagnostics.get("firewall") or "unknown").lower()
+    root_points = 5 if root_policy == "no" else 4 if root_policy in {"prohibit-password", "without-password"} else 2 if root_policy == "yes" else 3
+    password_points = 5 if password_policy == "no" else 2 if password_policy == "yes" else 3
+    firewall_active = firewall in {"active", "running"}
+    security_checks = [
+        _quality_check("root_login", "Root SSH 策略", "pass" if root_points >= 4 else "warn" if root_policy != "unknown" else "info", root_points, 5, root_policy, "确认来源限制、强凭据和防爆破措施符合当前运维策略。"),
+        _quality_check("password_auth", "密码登录策略", "pass" if password_policy == "no" else "warn" if password_policy == "yes" else "info", password_points, 5, password_policy, "允许密码登录时应限制来源并配置防爆破措施。"),
+        _quality_check("firewall", "主机防火墙", "pass" if firewall_active else "warn" if firewall not in {"unknown", "unavailable", ""} else "info", 5 if firewall_active else 2 if firewall not in {"unknown", "unavailable", ""} else 3, 5, firewall, "核对云防火墙与主机防火墙的入站范围。"),
+    ]
+    dimensions.append({"id": "security", "name": "访问安全", "checks": security_checks})
+
+    if row["heartbeat_enabled"]:
+        latest = mesh_evidence.get("latest") or {}
+        latest_details = latest.get("details") or {}
+        direct_ok = heartbeat_probe.get("ok")
+        externally_confirmed = bool(latest_details.get("external_visibility_confirmed"))
+        rate = mesh_evidence.get("confirmed_rate")
+        heartbeat_checks = [
+            _quality_check("heartbeat_direct", "心跳 Agent 直连", "pass" if direct_ok is True else "fail" if direct_ok is False else "info", 4 if direct_ok is True else 0 if direct_ok is False else 2, 4, f"{heartbeat_probe.get('detail', '无结果')} {heartbeat_probe.get('latency_ms', '')}ms".strip(), "检查 Agent 服务、端口监听、防火墙和签名配置。"),
+            _quality_check("heartbeat_latest", "最新邻居确认", "pass" if externally_confirmed else "fail", 3 if externally_confirmed else 0, 3, f"传播 {latest.get('peer_visible', 0)}/{latest.get('peer_expected', 0)}", "检查节点到邻居的 9108/tcp 双向连通和报告定时器。"),
+            _quality_check("heartbeat_window", "近期邻居确认率", "pass" if rate is not None and rate >= 0.8 else "warn" if rate is not None and rate >= 0.5 else "fail" if rate is not None else "info", 3 if rate is not None and rate >= 0.8 else 2 if rate is not None and rate >= 0.5 else 0 if rate is not None else 1, 3, f"{mesh_evidence.get('confirmed_count', 0)}/{mesh_evidence.get('sample_count', 0)} 个样本，{round(rate * 100)}%" if rate is not None else "暂无样本", "结合失败报告源和邻居可见列表排查间歇性传播。"),
+        ]
+    else:
+        heartbeat_checks = [_quality_check("heartbeat_disabled", "分布式心跳", "info", 10, 10, "该节点未启用分布式心跳")]
+    dimensions.append({"id": "heartbeat", "name": "心跳传播", "checks": heartbeat_checks})
+
+    for dimension in dimensions:
+        dimension["score"] = sum(item["points"] for item in dimension["checks"])
+        dimension["max_score"] = sum(item["max_points"] for item in dimension["checks"])
+    score = sum(item["score"] for item in dimensions)
+    maximum = sum(item["max_score"] for item in dimensions)
+    normalized_score = round(100 * score / maximum) if maximum else 0
+    findings = [check for dimension in dimensions for check in dimension["checks"] if check["status"] in {"warn", "fail"}]
+    grade = "A" if normalized_score >= 90 else "B" if normalized_score >= 75 else "C" if normalized_score >= 60 else "D"
+    status = "ok" if normalized_score >= 90 and not any(item["status"] == "fail" for item in findings) else "warning" if normalized_score >= 60 else "error"
+    return {
+        "version": 2,
+        "title": "环境质量体检报告",
+        "score": normalized_score,
+        "grade": grade,
+        "status": status,
+        "dimensions": dimensions,
+        "findings": findings,
+        "mesh_evidence": mesh_evidence,
+        "heartbeat_probe": heartbeat_probe,
+        "summary": f"{normalized_score} 分，{len(findings)} 项需要关注",
+    }
 
 
 def fallback_local_config_report() -> tuple[str, str, dict[str, Any], list[dict[str, str]], list[dict[str, Any]]]:
@@ -992,7 +1249,14 @@ def run_server_inspection(row, password: str = "") -> tuple[str, str, dict[str, 
         return run_paramiko_inspection(row, password)
     command = local_inspection_command(INSPECTION_SCRIPT) if is_local else ssh_command(row, INSPECTION_SCRIPT)
     try:
-        completed = subprocess.run(command, capture_output=True, text=True, timeout=45)
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=45,
+        )
     except FileNotFoundError as exc:
         if is_local:
             return fallback_local_config_report()
@@ -1270,14 +1534,25 @@ def check_server(server_id: int, user=Depends(current_user), conn=Depends(db)):
     return {"status": status, "latency_ms": latency, "error": error}
 
 
-@app.post("/api/servers/{server_id}/inspect")
-def inspect_server(server_id: int, user=Depends(current_user), conn=Depends(db), c=Depends(cipher)):
+def run_and_store_inspection(server_id: int, user, conn, c, include_quality: bool = False):
     row = conn.execute("select * from servers where id = ?", (server_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="server not found")
     ensure_active_server(row)
     password = c.decrypt(row["credential_encrypted"]) if row["auth_type"] == "password" else ""
     status, summary, report, apps, services = run_server_inspection(row, password)
+    audit_action = "inspect"
+    if include_quality:
+        mesh_evidence = mesh_quality_evidence(conn, server_id)
+        heartbeat_probe = probe_heartbeat_agent(row)
+        quality_report = build_quality_report(row, status, report, services, mesh_evidence, heartbeat_probe)
+        report["quality_report"] = quality_report
+        report["health_score"] = quality_report["score"]
+        if report.get("error"):
+            report["collection_error"] = report.pop("error")
+        status = quality_report["status"]
+        summary = quality_report["summary"]
+        audit_action = "quality_check"
     actual_hostname = report.get("hostname") or row["hostname"]
     conn.execute(
         """
@@ -1289,9 +1564,19 @@ def inspect_server(server_id: int, user=Depends(current_user), conn=Depends(db),
         (actual_hostname, status, summary, json.dumps(report), json.dumps(apps), json.dumps(services), server_id),
     )
     conn.commit()
-    audit(conn, user["username"], "inspect", "server", server_id, summary)
+    audit(conn, user["username"], audit_action, "server", server_id, summary)
     row = conn.execute("select * from servers where id = ?", (server_id,)).fetchone()
     return row_to_server(row)
+
+
+@app.post("/api/servers/{server_id}/inspect")
+def inspect_server(server_id: int, user=Depends(current_user), conn=Depends(db), c=Depends(cipher)):
+    return run_and_store_inspection(server_id, user, conn, c)
+
+
+@app.post("/api/servers/{server_id}/quality-check")
+def quality_check_server(server_id: int, user=Depends(current_user), conn=Depends(db), c=Depends(cipher)):
+    return run_and_store_inspection(server_id, user, conn, c, include_quality=True)
 
 
 @app.get("/api/servers/{server_id}/credential")

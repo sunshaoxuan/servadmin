@@ -102,6 +102,11 @@ function render() {
         if (server.is_retired || isServerBusy(server.id)) return;
         await runServerAction(server.id, "inspect");
       }
+      if (el.dataset.rowAction === "quality-check") {
+        if (server.is_retired || isServerBusy(server.id)) return;
+        state.activeDetailTab = "environment";
+        await runServerAction(server.id, "quality-check");
+      }
     });
   });
 
@@ -273,13 +278,14 @@ function rowHtml(s) {
   const retired = Boolean(s.is_retired);
   const checkRunning = isActionRunning(s.id, "check");
   const inspectRunning = isActionRunning(s.id, "inspect");
-  const busy = checkRunning || inspectRunning;
+  const qualityRunning = isActionRunning(s.id, "quality-check");
+  const busy = checkRunning || inspectRunning || qualityRunning;
   const serverStatus = s.last_status || "unknown";
   const configStatus = s.config_status || "unknown";
   const tags = (s.tags || []).slice(0, 3).map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join("");
   const disabledAttr = retired || busy ? 'disabled aria-disabled="true"' : "";
-  const checkTitle = retired ? "已失效节点不可检测" : checkRunning ? "SSH 检查中" : inspectRunning ? "配置检查中" : "检查 SSH";
-  const inspectTitle = retired ? "已失效节点不可检测" : inspectRunning ? "配置检查中" : checkRunning ? "SSH 检查中" : "检查配置";
+  const checkTitle = retired ? "已失效节点不可检测" : checkRunning ? "SSH 检查中" : busy ? "另一项检查正在运行" : "检查 SSH";
+  const qualityTitle = retired ? "已失效节点不可检测" : qualityRunning ? "全面体检中" : busy ? "另一项检查正在运行" : "环境质量全面体检";
   return `
     <tr class="ops-row ${active} ${retired ? "retired" : ""}" data-id="${s.id}">
       <td>
@@ -305,7 +311,7 @@ function rowHtml(s) {
       <td data-label="操作">
         <div class="row-actions">
           <button class="btn btn-light btn-icon btn-sm ${checkRunning ? "action-loading" : ""}" type="button" title="${checkTitle}" data-row-action="check" ${disabledAttr}>${actionIcon("check", checkRunning)}</button>
-          <button class="btn btn-light btn-icon btn-sm ${inspectRunning ? "action-loading" : ""}" type="button" title="${inspectTitle}" data-row-action="inspect" ${disabledAttr}>${actionIcon("inspect", inspectRunning)}</button>
+          <button class="btn btn-light btn-icon btn-sm ${qualityRunning ? "action-loading" : ""}" type="button" title="${qualityTitle}" data-row-action="quality-check" ${disabledAttr}>${actionIcon("quality-check", qualityRunning)}</button>
           <button class="btn btn-light btn-icon btn-sm" type="button" title="编辑" data-row-action="edit"><i class="ti ti-pencil"></i></button>
         </div>
       </td>
@@ -407,28 +413,36 @@ function isActionRunning(serverId, action) {
 }
 
 function isServerBusy(serverId) {
-  return isActionRunning(serverId, "check") || isActionRunning(serverId, "inspect");
+  return isActionRunning(serverId, "check") || isActionRunning(serverId, "inspect") || isActionRunning(serverId, "quality-check");
 }
 
 function actionIcon(action, running) {
   if (running) return '<i class="ti ti-loader-2 action-spinner" aria-hidden="true"></i>';
-  return action === "check" ? '<i class="ti ti-activity-heartbeat"></i>' : '<i class="ti ti-list-search"></i>';
+  if (action === "check") return '<i class="ti ti-activity-heartbeat"></i>';
+  if (action === "quality-check") return '<i class="ti ti-stethoscope"></i>';
+  return '<i class="ti ti-list-search"></i>';
 }
 
 function renderActionButtons(server) {
   const checkRunning = isActionRunning(server.id, "check");
   const inspectRunning = isActionRunning(server.id, "inspect");
-  const busy = checkRunning || inspectRunning;
+  const qualityRunning = isActionRunning(server.id, "quality-check");
+  const busy = checkRunning || inspectRunning || qualityRunning;
   const checkBtn = $("checkBtn");
   const inspectBtn = $("inspectBtn");
+  const qualityCheckBtn = $("qualityCheckBtn");
   checkBtn.disabled = Boolean(server.is_retired || busy);
   inspectBtn.disabled = Boolean(server.is_retired || busy);
-  checkBtn.title = server.is_retired ? "已失效节点不可检测" : checkRunning ? "SSH 检查中" : inspectRunning ? "配置检查中" : "";
-  inspectBtn.title = server.is_retired ? "已失效节点不可检测" : inspectRunning ? "配置检查中" : checkRunning ? "SSH 检查中" : "";
+  qualityCheckBtn.disabled = Boolean(server.is_retired || busy);
+  checkBtn.title = server.is_retired ? "已失效节点不可检测" : checkRunning ? "SSH 检查中" : busy ? "另一项检查正在运行" : "";
+  inspectBtn.title = server.is_retired ? "已失效节点不可检测" : inspectRunning ? "配置检查中" : busy ? "另一项检查正在运行" : "";
+  qualityCheckBtn.title = server.is_retired ? "已失效节点不可检测" : qualityRunning ? "全面体检中" : busy ? "另一项检查正在运行" : "";
   checkBtn.classList.toggle("action-loading", checkRunning);
   inspectBtn.classList.toggle("action-loading", inspectRunning);
+  qualityCheckBtn.classList.toggle("action-loading", qualityRunning);
   checkBtn.innerHTML = `${actionIcon("check", checkRunning)}${checkRunning ? "检查中" : "检查 SSH"}`;
   inspectBtn.innerHTML = `${actionIcon("inspect", inspectRunning)}${inspectRunning ? "检查中" : "检查配置"}`;
+  qualityCheckBtn.innerHTML = `${actionIcon("quality-check", qualityRunning)}${qualityRunning ? "体检中" : "全面体检"}`;
 }
 
 async function runServerAction(serverId, action) {
@@ -530,6 +544,9 @@ function environmentReportHtml(server) {
   if (report.error) {
     return `<div class="environment-error">${escapeHtml(report.error)}</div>`;
   }
+  if (report.quality_report?.version >= 2) {
+    return qualityReportHtml(server, report.quality_report);
+  }
   const sections = [
     {
       title: "一、操作系统信息",
@@ -598,6 +615,70 @@ function environmentReportHtml(server) {
       </div>
       ${sections.map(reportSectionHtml).join("")}
     </div>`;
+}
+
+function qualityStatusLabel(status) {
+  return { pass: "通过", warn: "关注", fail: "异常", info: "信息" }[status] || status;
+}
+
+function qualityReportHtml(server, quality) {
+  const findings = quality.findings || [];
+  const mesh = quality.mesh_evidence || {};
+  const meshSummary = mesh.sample_count
+    ? `最近 ${mesh.sample_count} 个样本中，${mesh.confirmed_count} 个获得邻居确认`
+    : "暂无分布式心跳样本";
+  return `
+    <div class="quality-report">
+      <div class="quality-hero quality-${escapeHtml(quality.status || "warning")}">
+        <div class="quality-score"><strong>${escapeHtml(quality.score)}</strong><span>/ 100</span></div>
+        <div>
+          <span>Server Desk 环境质量体检报告</span>
+          <h3>${escapeHtml(server.name)}，${escapeHtml(server.hostname)}</h3>
+          <p>等级 ${escapeHtml(quality.grade || "未评级")}，${escapeHtml(quality.summary || "体检完成")}</p>
+          <small>报告时间 ${escapeHtml(formatDateTime(server.last_config_check_at))}</small>
+        </div>
+      </div>
+      <div class="quality-dimensions">
+        ${(quality.dimensions || []).map(qualityDimensionHtml).join("")}
+      </div>
+      <section class="quality-findings">
+        <div class="quality-section-head">
+          <h3>需要关注的项目</h3>
+          <span>${findings.length} 项</span>
+        </div>
+        ${findings.length ? findings.map((item) => `
+          <article class="quality-finding quality-check-${escapeHtml(item.status)}">
+            <div><span>${escapeHtml(qualityStatusLabel(item.status))}</span><strong>${escapeHtml(item.label)}</strong></div>
+            <p>${escapeHtml(item.evidence || "无补充证据")}</p>
+            ${item.recommendation ? `<small>${escapeHtml(item.recommendation)}</small>` : ""}
+          </article>
+        `).join("") : '<div class="quality-empty">本次体检没有发现需要关注的项目。</div>'}
+      </section>
+      <section class="quality-evidence">
+        <h3>心跳传播证据</h3>
+        <p>${escapeHtml(meshSummary)}</p>
+        <small>Agent 直连：${escapeHtml(quality.heartbeat_probe?.detail || "未执行")}${Number.isFinite(quality.heartbeat_probe?.latency_ms) ? `，${quality.heartbeat_probe.latency_ms} ms` : ""}</small>
+      </section>
+    </div>`;
+}
+
+function qualityDimensionHtml(dimension) {
+  return `
+    <section class="quality-dimension">
+      <div class="quality-section-head">
+        <h3>${escapeHtml(dimension.name)}</h3>
+        <span>${escapeHtml(dimension.score)} / ${escapeHtml(dimension.max_score)}</span>
+      </div>
+      <div class="quality-check-list">
+        ${(dimension.checks || []).map((item) => `
+          <div class="quality-check quality-check-${escapeHtml(item.status)}">
+            <i class="ti ${item.status === "pass" ? "ti-circle-check" : item.status === "fail" ? "ti-alert-circle" : item.status === "warn" ? "ti-alert-triangle" : "ti-info-circle"}"></i>
+            <div><strong>${escapeHtml(item.label)}</strong><small>${escapeHtml(item.evidence || "未记录")}</small></div>
+            <span>${escapeHtml(item.points)} / ${escapeHtml(item.max_points)}</span>
+          </div>
+        `).join("")}
+      </div>
+    </section>`;
 }
 
 function reportSectionHtml(section) {
@@ -872,6 +953,7 @@ function actionLabel(value) {
     delete: "删除",
     check: "检查",
     inspect: "配置检查",
+    quality_check: "环境体检",
     reveal_credential: "查看凭据",
     reveal_connection_secret: "查看连接密钥",
   }[value] || value;
@@ -1122,6 +1204,13 @@ $("inspectBtn").addEventListener("click", async () => {
   const s = selected();
   if (!s || s.is_retired || isServerBusy(s.id)) return;
   await runServerAction(s.id, "inspect");
+});
+
+$("qualityCheckBtn").addEventListener("click", async () => {
+  const s = selected();
+  if (!s || s.is_retired || isServerBusy(s.id)) return;
+  state.activeDetailTab = "environment";
+  await runServerAction(s.id, "quality-check");
 });
 
 $("copySshUnixBtn").addEventListener("click", async () => {
