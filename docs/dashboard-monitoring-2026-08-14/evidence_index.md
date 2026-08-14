@@ -18,4 +18,5 @@
 | 生产供应商流量截图 | `docs/assets/provider-sync-production-20260814.png` | 七台生产卡片、355.6 GB 真实读数与 34.7% 占比验证 |
 | 生产供应商档案截图 | `docs/assets/provider-access-production-20260814.png` | 管理用户、服务编号、服务器标识、同步状态与遮蔽密码验证 |
 | VMISS 时区换算截图 | `docs/assets/provider-timezone-local-20260814.png` | 加拿大多伦多原始重置时间与东京换算时间同时展示 |
+| VMISS 生产时区截图 | `docs/assets/provider-timezone-production-20260814.png` | 生产卡片的 332.1 GB、27.7% 与双时区重置时间验证 |
 | Riven Cloud 连接器 | `app/provider_sync.py` | 客户区登录、单点登录、流量读取、快照更新和同步状态 |
