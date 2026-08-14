@@ -96,6 +96,25 @@ function stateLabel(value) {
   return ({ online: "在线", delayed: "同步延迟", offline: "离线", pending: "待采样", unknown: "待确认" })[value] || "待确认";
 }
 
+function providerResetHtml(item) {
+  if (!item.next_reset_at || !item.reset_timezone) {
+    return `${escapeHtml(item.period_start)} 至 ${escapeHtml(item.period_end)}`;
+  }
+  const reset = new Date(item.next_reset_at);
+  if (Number.isNaN(reset.getTime())) return `${escapeHtml(item.period_start)} 至 ${escapeHtml(item.period_end)}`;
+  const formatIn = (timeZone) => new Intl.DateTimeFormat("zh-CN", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(reset);
+  return `重置 ${escapeHtml(formatIn("Asia/Tokyo"))} JST<br><small>供应商 ${escapeHtml(formatIn(item.reset_timezone))} ${escapeHtml(item.reset_timezone)}</small>`;
+}
+
 function subscriptionHtml(server) {
   const item = server.subscription;
   if (!item) {
@@ -119,7 +138,7 @@ function subscriptionHtml(server) {
     <div class="traffic-progress"><i style="width:${displayPercent}%"></i></div>
     <div class="traffic-meta">
       <span>${formatBytes(item.used_bytes)} / ${formatBytes(item.quota_bytes)}</span>
-      <span>${escapeHtml(item.period_start)} 至 ${escapeHtml(item.period_end)}</span>
+      <span>${providerResetHtml(item)}</span>
     </div>
     <small class="traffic-source">供应商管理画面读数 · 来源 ${source} · 采集 ${escapeHtml(collected)}</small>`;
 }
@@ -870,6 +889,8 @@ function openTrafficForm(serverId) {
   $("trafficQuotaGb").value = item ? Number(item.quota_bytes) / 1_000_000_000 : "";
   $("trafficSourceLabel").value = item?.source_label || `${server.provider} 管理画面`;
   $("trafficSourceUrl").value = item?.source_url || "";
+  $("trafficNextResetAt").value = item?.next_reset_at ? item.next_reset_at.slice(0, 19) : "";
+  $("trafficResetTimezone").value = item?.reset_timezone || "";
   $("trafficDialog").showModal();
 }
 
@@ -1421,6 +1442,8 @@ $("trafficForm").addEventListener("submit", async (event) => {
       quota_gb: Number($("trafficQuotaGb").value),
       source_label: $("trafficSourceLabel").value.trim(),
       source_url: $("trafficSourceUrl").value.trim(),
+      next_reset_at: $("trafficNextResetAt").value,
+      reset_timezone: $("trafficResetTimezone").value.trim(),
     }),
   });
   state.dashboard = result.dashboard;

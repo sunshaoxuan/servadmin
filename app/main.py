@@ -12,8 +12,10 @@ import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any, List, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
@@ -97,6 +99,30 @@ class SubscriptionUsagePayload(BaseModel):
     quota_gb: float = Field(gt=0)
     source_label: str = Field(min_length=1, max_length=120)
     source_url: Optional[AnyHttpUrl] = None
+    next_reset_at: Optional[str] = None
+    reset_timezone: Optional[str] = Field(default=None, max_length=64)
+
+
+def normalize_provider_reset(next_reset_at: Optional[str], reset_timezone: Optional[str]) -> tuple[str, str]:
+    timestamp = (next_reset_at or "").strip()
+    timezone_name = (reset_timezone or "").strip()
+    if not timestamp and not timezone_name:
+        return "", ""
+    if not timestamp or not timezone_name:
+        raise HTTPException(status_code=422, detail="next_reset_at and reset_timezone must be provided together")
+    try:
+        timezone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError as exc:
+        raise HTTPException(status_code=422, detail="reset_timezone must be a valid IANA timezone") from exc
+    try:
+        parsed = datetime.fromisoformat(timestamp)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="next_reset_at must be an ISO date-time") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone)
+    else:
+        parsed = parsed.astimezone(timezone)
+    return parsed.isoformat(timespec="seconds"), timezone_name
 
 
 def db():
@@ -1678,6 +1704,7 @@ def save_subscription_usage(
 ):
     if payload.period_end < payload.period_start:
         raise HTTPException(status_code=422, detail="period_end must not precede period_start")
+    next_reset_at, reset_timezone = normalize_provider_reset(payload.next_reset_at, payload.reset_timezone)
     row = conn.execute("select id from servers where id = ? and is_retired = 0", (server_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="active server not found")
@@ -1688,13 +1715,15 @@ def save_subscription_usage(
         """
         insert into server_subscription_usage(
           server_id, period_start, period_end, used_bytes, quota_bytes,
-          source_label, source_url, created_by
-        ) values (?, ?, ?, ?, ?, ?, ?, ?)
+          source_label, source_url, next_reset_at, reset_timezone, created_by
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         on conflict(server_id, period_start, period_end) do update set
           used_bytes=excluded.used_bytes,
           quota_bytes=excluded.quota_bytes,
           source_label=excluded.source_label,
           source_url=excluded.source_url,
+          next_reset_at=excluded.next_reset_at,
+          reset_timezone=excluded.reset_timezone,
           collected_at=current_timestamp,
           created_by=excluded.created_by
         """,
@@ -1706,6 +1735,8 @@ def save_subscription_usage(
             quota_bytes,
             payload.source_label,
             str(payload.source_url) if payload.source_url else "",
+            next_reset_at,
+            reset_timezone,
             user["username"],
         ),
     )

@@ -439,6 +439,8 @@
           <label>套餐流量 GB<input id="trafficQuotaGb" type="number" min="0.001" step="0.001" required /></label>
           <label>数据来源<input id="trafficSourceLabel" placeholder="例如 Riven Cloud 控制台" required /></label>
           <label>管理画面地址<input id="trafficSourceUrl" type="url" placeholder="https://provider.example/servers" /></label>
+          <label>供应商下次重置时间<input id="trafficNextResetAt" type="datetime-local" step="1" /></label>
+          <label>供应商时区<input id="trafficResetTimezone" placeholder="例如 America/Toronto" /></label>
         </div>
         <div class="source-note"><i class="ti ti-shield-check"></i>仅保存管理画面显示的权威读数、周期和来源地址，不在此表单保存供应商密码。</div>
         <div class="dialog-actions">
@@ -449,6 +451,6 @@
       </form>
     </dialog>
 
-    <script src="static/app.js?v=20260814-provider-access1"></script>
+    <script src="static/app.js?v=20260814-provider-reset1"></script>
   </body>
 </html>

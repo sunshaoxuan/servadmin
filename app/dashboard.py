@@ -75,7 +75,7 @@ def _traffic_usage(conn, server_id: int) -> dict[str, Any] | None:
     provider_row = conn.execute(
         """
         select period_start, period_end, used_bytes, quota_bytes, source_label,
-               source_url, collected_at
+               source_url, next_reset_at, reset_timezone, collected_at
         from server_subscription_usage
         where server_id = ?
         order by collected_at desc, id desc

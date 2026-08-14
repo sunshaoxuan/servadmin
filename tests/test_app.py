@@ -36,6 +36,7 @@ def test_version_3_clears_existing_agent_billing_meter_for_safe_rollback(tmp_pat
         conn.execute("insert into schema_migrations(version, name) values (1, 'server subscription usage')")
         conn.execute("insert into schema_migrations(version, name) values (2, 'automatic monthly traffic meter')")
         conn.execute("create table server_traffic_meter(id integer primary key, measured_rx_bytes integer)")
+        conn.execute("create table server_subscription_usage(id integer primary key)")
         conn.execute("create index idx_traffic_meter_server_period on server_traffic_meter(id)")
         conn.execute("insert into server_traffic_meter(measured_rx_bytes) values (123456)")
         conn.commit()
@@ -44,6 +45,7 @@ def test_version_3_clears_existing_agent_billing_meter_for_safe_rollback(tmp_pat
 
         assert conn.execute("select count(*) from schema_migrations where version = 3").fetchone()[0] == 1
         assert conn.execute("select count(*) from schema_migrations where version = 4").fetchone()[0] == 1
+        assert conn.execute("select count(*) from schema_migrations where version = 5").fetchone()[0] == 1
         assert conn.execute("select count(*) from server_traffic_meter").fetchone()[0] == 0
     finally:
         conn.close()
@@ -294,6 +296,8 @@ def test_dashboard_combines_heartbeat_io_space_and_subscription_usage():
                 "quota_gb": 1024,
                 "source_label": "Riven Cloud 管理画面",
                 "source_url": "https://example.invalid/server/usage",
+                "next_reset_at": "2026-08-24T08:03:17",
+                "reset_timezone": "America/Toronto",
             },
         )
         assert saved.status_code == 200
@@ -302,7 +306,22 @@ def test_dashboard_combines_heartbeat_io_space_and_subscription_usage():
         assert subscription["quota_bytes"] == 1_024_000_000_000
         assert subscription["used_percent"] == 12.5
         assert subscription["authority"] == "provider"
+        assert subscription["next_reset_at"] == "2026-08-24T08:03:17-04:00"
+        assert subscription["reset_timezone"] == "America/Toronto"
         assert saved.json()["dashboard"]["summary"]["subscription_ready"] == 1
+
+        invalid_reset = client.put(
+            f"/api/servers/{created['id']}/subscription-usage",
+            json={
+                "period_start": "2026-08-01",
+                "period_end": "2026-08-31",
+                "used_gb": 128.5,
+                "quota_gb": 1024,
+                "source_label": "Riven Cloud 管理画面",
+                "next_reset_at": "2026-09-01T00:00:00",
+            },
+        )
+        assert invalid_reset.status_code == 422
 
         conn = connect(db_path)
         try:
@@ -310,12 +329,14 @@ def test_dashboard_combines_heartbeat_io_space_and_subscription_usage():
             assert conn.execute("select count(*) from schema_migrations where version = 2").fetchone()[0] == 1
             assert conn.execute("select count(*) from schema_migrations where version = 3").fetchone()[0] == 1
             assert conn.execute("select count(*) from schema_migrations where version = 4").fetchone()[0] == 1
+            assert conn.execute("select count(*) from schema_migrations where version = 5").fetchone()[0] == 1
             assert conn.execute("select count(*) from server_traffic_meter").fetchone()[0] == 0
             init_db(conn)
             assert conn.execute("select count(*) from schema_migrations where version = 1").fetchone()[0] == 1
             assert conn.execute("select count(*) from schema_migrations where version = 2").fetchone()[0] == 1
             assert conn.execute("select count(*) from schema_migrations where version = 3").fetchone()[0] == 1
             assert conn.execute("select count(*) from schema_migrations where version = 4").fetchone()[0] == 1
+            assert conn.execute("select count(*) from schema_migrations where version = 5").fetchone()[0] == 1
         finally:
             conn.close()
     finally:
@@ -380,7 +401,9 @@ def test_static_and_index_are_not_cached():
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
         assert "static/styles.css?v=20260814-dashboard1" in response.text
-        assert "static/app.js?v=20260814-provider-access1" in response.text
+        assert "static/app.js?v=20260814-provider-reset1" in response.text
+        assert 'id="trafficNextResetAt"' in response.text
+        assert 'id="trafficResetTimezone"' in response.text
         assert 'id="detailCredential"' in response.text
         assert 'id="settingsView"' in response.text
         assert 'id="showRetiredToggle"' in response.text

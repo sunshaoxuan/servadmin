@@ -176,6 +176,14 @@ MIGRATIONS = [
         );
         """,
     ),
+    (
+        5,
+        "provider traffic reset timezone",
+        """
+        alter table server_subscription_usage add column next_reset_at text;
+        alter table server_subscription_usage add column reset_timezone text;
+        """,
+    ),
 ]
 
 SERVER_MIGRATIONS = {
