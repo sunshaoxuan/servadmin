@@ -1,10 +1,14 @@
 import os
+import json
 import socket
 import tempfile
+import time
 from pathlib import Path
 
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
+
+from app.db import connect, init_db
 
 
 def make_client():
@@ -148,6 +152,112 @@ def test_requires_login_for_servers():
         os.unlink(db_path)
 
 
+def test_dashboard_combines_heartbeat_io_space_and_subscription_usage():
+    client, db_path = make_client()
+    try:
+        assert client.post("/api/login", json={"username": "admin", "password": "admin-pass"}).status_code == 200
+        created = client.post(
+            "/api/servers",
+            json={
+                "name": "Dashboard Node",
+                "hostname": "dashboard-node.local",
+                "ipv4": "192.0.2.88",
+                "provider": "Riven Cloud",
+                "region": "Tokyo",
+                "login_user": "root",
+                "auth_type": "key",
+                "heartbeat_enabled": True,
+                "tags": ["prod"],
+            },
+        ).json()
+        now = int(time.time())
+        conn = connect(db_path)
+        try:
+            init_db(conn)
+            for sampled_at, self_data in [
+                (
+                    now - 60,
+                    {
+                        "observed_at": now - 60,
+                        "cpu_total_jiffies": 1000,
+                        "cpu_idle_jiffies": 700,
+                        "network_rx_bytes": 1_000_000,
+                        "network_tx_bytes": 2_000_000,
+                        "disk_read_bytes": 3_000_000,
+                        "disk_write_bytes": 4_000_000,
+                    },
+                ),
+                (
+                    now,
+                    {
+                        "observed_at": now,
+                        "cpu_total_jiffies": 1600,
+                        "cpu_idle_jiffies": 1000,
+                        "network_rx_bytes": 1_060_000,
+                        "network_tx_bytes": 2_120_000,
+                        "disk_read_bytes": 3_180_000,
+                        "disk_write_bytes": 4_240_000,
+                        "load_average": [0.42, 0.3, 0.2],
+                        "memory_used_percent": 47.5,
+                        "disk_used_percent": 38.2,
+                        "disk_total_bytes": 100_000_000_000,
+                        "disk_free_bytes": 61_800_000_000,
+                    },
+                ),
+            ]:
+                conn.execute(
+                    """
+                    insert into mesh_health_samples(
+                      server_id, sampled_at, network_score, app_score, direct_ok,
+                      peer_visible, peer_expected, details_json
+                    ) values (?, ?, 100, 100, 1, 2, 2, ?)
+                    """,
+                    (created["id"], sampled_at, json.dumps({"self": self_data})),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+        dashboard = client.get("/api/dashboard")
+        assert dashboard.status_code == 200
+        node = dashboard.json()["servers"][0]
+        assert node["state"] == "online"
+        assert node["telemetry"]["cpu_used_percent"] == 50.0
+        assert node["telemetry"]["network_rx_bytes_per_second"] == 1000.0
+        assert node["telemetry"]["network_tx_bytes_per_second"] == 2000.0
+        assert node["telemetry"]["disk_read_bytes_per_second"] == 3000.0
+        assert node["telemetry"]["disk_write_bytes_per_second"] == 4000.0
+        assert node["subscription"] is None
+
+        saved = client.put(
+            f"/api/servers/{created['id']}/subscription-usage",
+            json={
+                "period_start": "2026-08-01",
+                "period_end": "2026-08-31",
+                "used_gb": 128.5,
+                "quota_gb": 1024,
+                "source_label": "Riven Cloud 管理画面",
+                "source_url": "https://example.invalid/server/usage",
+            },
+        )
+        assert saved.status_code == 200
+        subscription = saved.json()["dashboard"]["servers"][0]["subscription"]
+        assert subscription["used_bytes"] == 128_500_000_000
+        assert subscription["quota_bytes"] == 1_024_000_000_000
+        assert subscription["used_percent"] == 12.5
+        assert saved.json()["dashboard"]["summary"]["subscription_ready"] == 1
+
+        conn = connect(db_path)
+        try:
+            assert conn.execute("select count(*) from schema_migrations where version = 1").fetchone()[0] == 1
+            init_db(conn)
+            assert conn.execute("select count(*) from schema_migrations where version = 1").fetchone()[0] == 1
+        finally:
+            conn.close()
+    finally:
+        os.unlink(db_path)
+
+
 def test_check_uses_configured_ssh_port(monkeypatch):
     client, db_path = make_client()
     calls = []
@@ -205,8 +315,8 @@ def test_static_and_index_are_not_cached():
         response = client.get("/")
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
-        assert "static/styles.css?v=20260730-quality1" in response.text
-        assert "static/app.js?v=20260730-quality1" in response.text
+        assert "static/styles.css?v=20260814-dashboard1" in response.text
+        assert "static/app.js?v=20260814-dashboard1" in response.text
         assert 'id="detailCredential"' in response.text
         assert 'id="settingsView"' in response.text
         assert 'id="showRetiredToggle"' in response.text

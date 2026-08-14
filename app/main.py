@@ -18,10 +18,11 @@ from typing import Any, List, Optional
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import AnyHttpUrl, BaseModel, Field
 import paramiko
 
 from .db import connect, init_db, row_to_server
+from .dashboard import dashboard_snapshot
 from .mesh import DEFAULT_INTERVAL_SECONDS, fetch_peer_report, mesh_health_history, poll_mesh_once
 from .security import CredentialCipher, SessionCodec, hash_password, verify_password
 
@@ -77,6 +78,15 @@ class ServerPayload(BaseModel):
     tags: List[str] = Field(default_factory=list)
     notes: Optional[str] = ""
     credential: Optional[str] = ""
+
+
+class SubscriptionUsagePayload(BaseModel):
+    period_start: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    period_end: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    used_gb: float = Field(ge=0)
+    quota_gb: float = Field(gt=0)
+    source_label: str = Field(min_length=1, max_length=120)
+    source_url: Optional[AnyHttpUrl] = None
 
 
 def db():
@@ -1375,6 +1385,11 @@ def mesh_health(hours: int = 3, user=Depends(current_user), conn=Depends(db)):
     return mesh_health_history(conn, hours)
 
 
+@app.get("/api/dashboard")
+def dashboard(user=Depends(current_user), conn=Depends(db)):
+    return dashboard_snapshot(conn)
+
+
 @app.get("/api/me")
 def me(request: Request, conn=Depends(db)):
     token = request.cookies.get(SESSION_COOKIE, "")
@@ -1524,6 +1539,58 @@ def delete_server(server_id: int, user=Depends(current_user), conn=Depends(db)):
     conn.commit()
     audit(conn, user["username"], "delete", "server", server_id, row["hostname"])
     return {"ok": True}
+
+
+@app.put("/api/servers/{server_id}/subscription-usage")
+def save_subscription_usage(
+    server_id: int,
+    payload: SubscriptionUsagePayload,
+    user=Depends(current_user),
+    conn=Depends(db),
+):
+    if payload.period_end < payload.period_start:
+        raise HTTPException(status_code=422, detail="period_end must not precede period_start")
+    row = conn.execute("select id from servers where id = ? and is_retired = 0", (server_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="active server not found")
+    decimal_gb = 1_000_000_000
+    used_bytes = round(payload.used_gb * decimal_gb)
+    quota_bytes = round(payload.quota_gb * decimal_gb)
+    conn.execute(
+        """
+        insert into server_subscription_usage(
+          server_id, period_start, period_end, used_bytes, quota_bytes,
+          source_label, source_url, created_by
+        ) values (?, ?, ?, ?, ?, ?, ?, ?)
+        on conflict(server_id, period_start, period_end) do update set
+          used_bytes=excluded.used_bytes,
+          quota_bytes=excluded.quota_bytes,
+          source_label=excluded.source_label,
+          source_url=excluded.source_url,
+          collected_at=current_timestamp,
+          created_by=excluded.created_by
+        """,
+        (
+            server_id,
+            payload.period_start,
+            payload.period_end,
+            used_bytes,
+            quota_bytes,
+            payload.source_label,
+            str(payload.source_url) if payload.source_url else "",
+            user["username"],
+        ),
+    )
+    conn.commit()
+    audit(
+        conn,
+        user["username"],
+        "update_subscription_usage",
+        "server",
+        server_id,
+        f"{payload.used_gb:g}/{payload.quota_gb:g} GB via {payload.source_label}",
+    )
+    return {"ok": True, "dashboard": dashboard_snapshot(conn)}
 
 
 @app.post("/api/servers/{server_id}/check")

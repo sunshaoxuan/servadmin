@@ -1129,6 +1129,24 @@ def test_local_status_collection_is_cached_between_reports(tmp_path, monkeypatch
     assert forced["sequence"] == first["sequence"] + 1
 
 
+def test_linux_telemetry_parsers_extract_cpu_route_and_physical_disk_counters():
+    total, idle = protocol._parse_cpu_counters("cpu  100 20 30 400 50 6 7 8 0 0\ncpu0 1 2 3 4")
+    assert total == 621
+    assert idle == 450
+
+    route = "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\neth0\t00000000\t0100000A\t0003\t0\t0\t100\t00000000"
+    assert protocol._parse_default_interface(route) == "eth0"
+
+    diskstats = """
+      8 0 sda 10 0 100 0 20 0 200 0 0 0 0 0 0 0 0
+      8 1 sda1 10 0 999 0 20 0 999 0 0 0 0 0 0 0 0
+    259 0 nvme0n1 11 0 300 0 21 0 400 0 0 0 0 0 0 0 0
+    """
+    read_bytes, write_bytes = protocol._parse_diskstats(diskstats)
+    assert read_bytes == (100 + 300) * 512
+    assert write_bytes == (200 + 400) * 512
+
+
 def test_main_merge_prefers_new_incarnation_after_clock_rollback():
     older_run = heartbeat(2, 80_100, incarnation=10, sequence=20)
     restarted = heartbeat(2, 80_000, incarnation=11, sequence=1)

@@ -90,7 +90,37 @@ create table if not exists mesh_poll_cycles (
   source_server_ids_json text not null default '[]',
   errors_json text not null default '{}'
 );
+
+create table if not exists schema_migrations (
+  version integer primary key,
+  name text not null,
+  applied_at text not null default current_timestamp
+);
 """
+
+MIGRATIONS = [
+    (
+        1,
+        "server subscription usage",
+        """
+        create table if not exists server_subscription_usage (
+          id integer primary key autoincrement,
+          server_id integer not null references servers(id) on delete cascade,
+          period_start text not null,
+          period_end text not null,
+          used_bytes integer not null check(used_bytes >= 0),
+          quota_bytes integer not null check(quota_bytes > 0),
+          source_label text not null,
+          source_url text,
+          collected_at text not null default current_timestamp,
+          created_by text not null,
+          unique(server_id, period_start, period_end)
+        );
+        create index if not exists idx_subscription_usage_server_collected
+        on server_subscription_usage(server_id, collected_at desc);
+        """,
+    ),
+]
 
 SERVER_MIGRATIONS = {
     "ssh_host": "alter table servers add column ssh_host text",
@@ -133,6 +163,18 @@ def init_db(conn: sqlite3.Connection) -> None:
     for column_name, statement in SERVER_MIGRATIONS.items():
         if column_name not in existing_columns:
             conn.execute(statement)
+    applied = {
+        int(row["version"] if isinstance(row, sqlite3.Row) else row[0])
+        for row in conn.execute("select version from schema_migrations").fetchall()
+    }
+    for version, name, script in MIGRATIONS:
+        if version in applied:
+            continue
+        conn.executescript(script)
+        conn.execute(
+            "insert into schema_migrations(version, name) values (?, ?)",
+            (version, name),
+        )
     conn.commit()
 
 

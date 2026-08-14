@@ -8,9 +8,10 @@ const state = {
   connectionSecrets: {},
   credentialRequests: {},
   connectionSecretRequests: {},
-  activeTab: "servers",
+  activeTab: "dashboard",
   services: null,
   meshHealth: { servers: [] },
+  dashboard: { summary: {}, servers: [] },
   runningActions: {},
 };
 
@@ -43,10 +44,11 @@ function showLogin() {
 }
 
 async function loadAll() {
-  [state.servers, state.audit, state.meshHealth] = await Promise.all([
+  [state.servers, state.audit, state.meshHealth, state.dashboard] = await Promise.all([
     api("/api/servers"),
     api("/api/audit"),
     api("/api/mesh/health?hours=3"),
+    api("/api/dashboard"),
   ]);
   const rows = filteredServers();
   if (!state.selectedId && rows.length) state.selectedId = rows[0].id;
@@ -65,6 +67,140 @@ function filteredServers() {
       .join(" ")
       .toLowerCase()
       .includes(q);
+  });
+}
+
+function formatBytes(value, digits = 1) {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes)) return "等待样本";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let amount = Math.max(0, bytes);
+  let index = 0;
+  while (amount >= 1000 && index < units.length - 1) {
+    amount /= 1000;
+    index += 1;
+  }
+  return `${amount.toFixed(index === 0 ? 0 : digits)} ${units[index]}`;
+}
+
+function metricValue(value, suffix = "%") {
+  return Number.isFinite(Number(value)) ? `${Number(value).toFixed(1)}${suffix}` : "等待样本";
+}
+
+function telemetryBar(value, tone = "orange") {
+  const bounded = Number.isFinite(Number(value)) ? Math.max(0, Math.min(100, Number(value))) : 0;
+  return `<span class="telemetry-track"><i class="${tone}" style="width:${bounded}%"></i></span>`;
+}
+
+function stateLabel(value) {
+  return ({ online: "在线", delayed: "同步延迟", offline: "离线", pending: "待采样", unknown: "待确认" })[value] || "待确认";
+}
+
+function subscriptionHtml(server) {
+  const item = server.subscription;
+  if (!item) {
+    return `
+      <div class="traffic-empty">
+        <div><strong>月度套餐流量</strong><small>尚未录入供应商管理画面读数</small></div>
+        <button type="button" class="traffic-link" data-monitor-action="traffic" data-id="${server.id}">录入读数 <i class="ti ti-arrow-up-right"></i></button>
+      </div>`;
+  }
+  const usedPercent = Math.max(0, Number(item.used_percent || 0));
+  const displayPercent = Math.min(100, usedPercent);
+  const collected = formatDateTime(item.collected_at);
+  const source = item.source_url
+    ? `<a href="${escapeHtml(item.source_url)}" target="_blank" rel="noreferrer">${escapeHtml(item.source_label)}</a>`
+    : escapeHtml(item.source_label);
+  return `
+    <div class="traffic-heading">
+      <div><span>月度套餐流量</span><strong>${metricValue(usedPercent)}</strong></div>
+      <button type="button" class="icon-ghost" data-monitor-action="traffic" data-id="${server.id}" title="更新读数"><i class="ti ti-pencil"></i></button>
+    </div>
+    <div class="traffic-progress"><i style="width:${displayPercent}%"></i></div>
+    <div class="traffic-meta">
+      <span>${formatBytes(item.used_bytes)} / ${formatBytes(item.quota_bytes)}</span>
+      <span>${escapeHtml(item.period_start)} 至 ${escapeHtml(item.period_end)}</span>
+    </div>
+    <small class="traffic-source">来源 ${source} · 采集 ${escapeHtml(collected)}</small>`;
+}
+
+function monitorCardHtml(server) {
+  const telemetry = server.telemetry || {};
+  const diskPercent = telemetry.disk_used_percent;
+  const memoryPercent = telemetry.memory_used_percent;
+  const cpuValue = telemetry.cpu_used_percent ?? telemetry.load_1m;
+  const cpuLabel = telemetry.cpu_used_percent == null ? "1 分钟负载" : "CPU 使用率";
+  const cpuDisplay = telemetry.cpu_used_percent == null
+    ? (Number.isFinite(Number(cpuValue)) ? Number(cpuValue).toFixed(2) : "等待样本")
+    : metricValue(cpuValue);
+  const sampled = telemetry.sampled_at
+    ? new Date(Number(telemetry.sampled_at) * 1000).toLocaleString("zh-CN", { hour12: false })
+    : "尚无样本";
+  return `
+    <article class="monitor-card" data-state="${escapeHtml(server.state)}">
+      <header class="monitor-card-head">
+        <div class="server-identity">
+          <span class="server-avatar">${escapeHtml(server.name.slice(0, 2).toUpperCase())}</span>
+          <div>
+            <div class="server-name-line"><h3>${escapeHtml(server.name)}</h3>${server.is_starred ? '<i class="ti ti-star-filled starred"></i>' : ""}</div>
+            <p>${escapeHtml(server.hostname)} · ${escapeHtml(server.ipv4 || "无公网 IPv4")}</p>
+          </div>
+        </div>
+        <button type="button" class="icon-ghost" data-monitor-action="assets" data-id="${server.id}" title="打开资产详情"><i class="ti ti-arrow-up-right"></i></button>
+      </header>
+      <div class="server-meta-row">
+        <span>${escapeHtml(server.provider)}</span><span>${escapeHtml(server.region)}</span>
+        <span class="live-pill ${escapeHtml(server.state)}"><i></i>${stateLabel(server.state)}</span>
+      </div>
+      <div class="liveness-copy"><strong>${escapeHtml(server.state_detail)}</strong><small>最新样本 ${escapeHtml(sampled)}</small></div>
+      <div class="telemetry-grid">
+        <div class="telemetry-cell"><span>${cpuLabel}</span><strong>${cpuDisplay}</strong>${telemetryBar(telemetry.cpu_used_percent, "orange")}</div>
+        <div class="telemetry-cell"><span>内存占用</span><strong>${metricValue(memoryPercent)}</strong>${telemetryBar(memoryPercent, "cyan")}</div>
+        <div class="telemetry-cell"><span>系统盘空间</span><strong>${metricValue(diskPercent)}</strong>${telemetryBar(diskPercent, Number(diskPercent) >= 85 ? "red" : "orange")}</div>
+      </div>
+      <div class="io-grid">
+        <div><span><i class="ti ti-world-download"></i>网络下行</span><strong>${formatBytes(telemetry.network_rx_bytes_per_second)}/s</strong></div>
+        <div><span><i class="ti ti-world-upload"></i>网络上行</span><strong>${formatBytes(telemetry.network_tx_bytes_per_second)}/s</strong></div>
+        <div><span><i class="ti ti-database-import"></i>磁盘读取</span><strong>${formatBytes(telemetry.disk_read_bytes_per_second)}/s</strong></div>
+        <div><span><i class="ti ti-database-export"></i>磁盘写入</span><strong>${formatBytes(telemetry.disk_write_bytes_per_second)}/s</strong></div>
+      </div>
+      <div class="space-note"><span>根分区可用</span><strong>${formatBytes(telemetry.disk_free_bytes)} / ${formatBytes(telemetry.disk_total_bytes)}</strong></div>
+      <div class="subscription-block">${subscriptionHtml(server)}</div>
+    </article>`;
+}
+
+function renderDashboard() {
+  const dashboard = state.dashboard || { summary: {}, servers: [] };
+  const summary = dashboard.summary || {};
+  const query = $("searchBox").value.trim().toLowerCase();
+  const visibleServers = (dashboard.servers || []).filter((server) => {
+    if (!query) return true;
+    return [server.name, server.hostname, server.ipv4, server.provider, server.region]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .includes(query);
+  });
+  $("metricTotal").textContent = summary.total || 0;
+  $("metricOnline").textContent = summary.online || 0;
+  $("metricUnknown").textContent = summary.attention || 0;
+  $("metricOffline").textContent = `${summary.attention || 0} 台延迟、离线或待采样`;
+  $("metricLast").textContent = `${summary.subscription_ready || 0} / ${summary.total || 0}`;
+  $("metricChecked").textContent = "供应商套餐读数";
+  $("tableCount").textContent = `${summary.total || 0} 台纳入监控`;
+  $("monitorGrid").innerHTML = visibleServers.length
+    ? visibleServers.map(monitorCardHtml).join("")
+    : '<div class="service-loading">暂无生产节点</div>';
+  document.querySelectorAll("[data-monitor-action]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const serverId = Number(button.dataset.id);
+      if (button.dataset.monitorAction === "assets") {
+        state.selectedId = serverId;
+        showTab("servers");
+        render();
+      }
+      if (button.dataset.monitorAction === "traffic") openTrafficForm(serverId);
+    });
   });
 }
 
@@ -113,19 +249,12 @@ function render() {
   const activeServers = state.servers.filter((s) => !s.is_retired);
   const retiredCount = state.servers.length - activeServers.length;
   const online = activeServers.filter((s) => s.last_status === "online").length;
-  const offline = activeServers.filter((s) => s.last_status === "offline").length;
-  const unknown = activeServers.filter((s) => s.last_status === "unknown").length;
-  const last = activeServers.map((s) => s.last_checked_at).filter(Boolean).sort().pop() || "";
-  const checked = activeServers.filter((s) => s.last_checked_at).length;
-
-  $("metricTotal").textContent = activeServers.length;
-  $("metricOnline").textContent = online;
-  $("metricUnknown").textContent = unknown;
-  $("metricOffline").textContent = `${offline} 台离线`;
-  $("metricLast").textContent = last ? last.slice(0, 16) : "无";
-  $("metricChecked").textContent = `${checked} 台有检查记录`;
-  $("summaryText").textContent = `${rows.length} 台可见，${online} 台在线${retiredCount ? `，${retiredCount} 台已失效` : ""}`;
-  $("tableCount").textContent = `${rows.length} 台可见`;
+  renderDashboard();
+  if (state.activeTab === "dashboard") {
+    $("summaryText").textContent = `全部 ${state.dashboard?.summary?.total || 0} 台生产节点的实时运行视图`;
+  } else if (state.activeTab !== "settings") {
+    $("summaryText").textContent = `${rows.length} 台可见，${online} 台在线${retiredCount ? `，${retiredCount} 台已失效` : ""}`;
+  }
   $("assetFooterCount").textContent = `共 ${rows.length} 条`;
   $("summaryOnlineBadge").textContent = `${online} 台在线`;
 
@@ -139,14 +268,16 @@ function showTab(tab) {
   document.querySelectorAll(".nav-item[data-tab], .mobile-tab[data-tab]").forEach((item) => {
     item.classList.toggle("active", item.dataset.tab === tab);
   });
+  const dashboardVisible = tab === "dashboard";
   const serversVisible = tab === "servers" || tab === "audit";
   const settings = tab === "settings";
+  $("dashboardView").classList.toggle("hidden", !dashboardVisible);
   $("serversView").classList.toggle("hidden", !serversVisible);
   $("settingsView").classList.toggle("hidden", !settings);
   document.querySelector(".search-wrap").classList.toggle("hidden", !serversVisible);
   $("retiredFilterLabel").classList.toggle("hidden", !serversVisible);
   $("addBtn").classList.toggle("hidden", !serversVisible);
-  $("pageTitle").textContent = settings ? "设置" : "服务器管理";
+  $("pageTitle").textContent = settings ? "设置" : dashboardVisible ? "运行监控" : "服务器资产";
   if (settings) {
     $("summaryText").textContent = "应用和服务状态";
     refreshServices();
@@ -714,6 +845,30 @@ function openForm(server = null) {
   $("serverDialog").showModal();
 }
 
+function openTrafficForm(serverId) {
+  const server = (state.dashboard?.servers || []).find((item) => item.id === serverId);
+  if (!server) return;
+  const item = server.subscription;
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const localDate = (value) => {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, "0");
+    const day = String(value.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
+  $("trafficServerId").value = server.id;
+  $("trafficServerName").textContent = `${server.name} · ${server.provider}`;
+  $("trafficPeriodStart").value = item?.period_start || localDate(monthStart);
+  $("trafficPeriodEnd").value = item?.period_end || localDate(monthEnd);
+  $("trafficUsedGb").value = item ? Number(item.used_bytes) / 1_000_000_000 : "";
+  $("trafficQuotaGb").value = item ? Number(item.quota_bytes) / 1_000_000_000 : "";
+  $("trafficSourceLabel").value = item?.source_label || `${server.provider} 管理画面`;
+  $("trafficSourceUrl").value = item?.source_url || "";
+  $("trafficDialog").showModal();
+}
+
 function payloadFromForm() {
   return {
     name: $("name").value.trim(),
@@ -1169,6 +1324,27 @@ $("expandAuditBtn").addEventListener("click", () => {
 });
 $("closeDialog").addEventListener("click", () => $("serverDialog").close());
 $("cancelBtn").addEventListener("click", () => $("serverDialog").close());
+$("closeTrafficDialog").addEventListener("click", () => $("trafficDialog").close());
+$("cancelTrafficBtn").addEventListener("click", () => $("trafficDialog").close());
+
+$("trafficForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const serverId = Number($("trafficServerId").value);
+  const result = await api(`/api/servers/${serverId}/subscription-usage`, {
+    method: "PUT",
+    body: JSON.stringify({
+      period_start: $("trafficPeriodStart").value,
+      period_end: $("trafficPeriodEnd").value,
+      used_gb: Number($("trafficUsedGb").value),
+      quota_gb: Number($("trafficQuotaGb").value),
+      source_label: $("trafficSourceLabel").value.trim(),
+      source_url: $("trafficSourceUrl").value.trim(),
+    }),
+  });
+  state.dashboard = result.dashboard;
+  $("trafficDialog").close();
+  render();
+});
 
 $("serverForm").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -1275,7 +1451,10 @@ $("copyCredentialBtn").addEventListener("click", async () => {
 setInterval(async () => {
   if ($("appView").classList.contains("hidden")) return;
   try {
-    state.meshHealth = await api("/api/mesh/health?hours=3");
+    [state.meshHealth, state.dashboard] = await Promise.all([
+      api("/api/mesh/health?hours=3"),
+      api("/api/dashboard"),
+    ]);
     render();
   } catch {
     // The next interval retries without interrupting the dashboard.

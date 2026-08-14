@@ -7,6 +7,7 @@ import hmac
 import json
 import os
 import random
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -186,6 +187,83 @@ def _memory_percent() -> float | None:
         return None
 
 
+def _parse_cpu_counters(text: str) -> tuple[int | None, int | None]:
+    first = text.splitlines()[0].split() if text.strip() else []
+    if not first or first[0] != "cpu":
+        return None, None
+    try:
+        values = [int(value) for value in first[1:]]
+    except ValueError:
+        return None, None
+    if len(values) < 4:
+        return None, None
+    total = sum(values)
+    idle = values[3] + (values[4] if len(values) > 4 else 0)
+    return total, idle
+
+
+def _parse_default_interface(text: str) -> str:
+    for line in text.splitlines()[1:]:
+        fields = line.split()
+        if len(fields) >= 4 and fields[1] == "00000000":
+            try:
+                if int(fields[3], 16) & 0x2:
+                    return fields[0]
+            except ValueError:
+                continue
+    return ""
+
+
+def _parse_diskstats(text: str) -> tuple[int, int]:
+    read_bytes = 0
+    write_bytes = 0
+    physical_disk = re.compile(r"^(?:sd[a-z]+|vd[a-z]+|xvd[a-z]+|nvme\d+n\d+)$")
+    for line in text.splitlines():
+        fields = line.split()
+        if len(fields) < 10 or not physical_disk.match(fields[2]):
+            continue
+        try:
+            read_bytes += int(fields[5]) * 512
+            write_bytes += int(fields[9]) * 512
+        except ValueError:
+            continue
+    return read_bytes, write_bytes
+
+
+def _local_io_counters() -> dict[str, int | str | None]:
+    result: dict[str, int | str | None] = {
+        "cpu_total_jiffies": None,
+        "cpu_idle_jiffies": None,
+        "network_interface": "",
+        "network_rx_bytes": None,
+        "network_tx_bytes": None,
+        "disk_read_bytes": None,
+        "disk_write_bytes": None,
+    }
+    try:
+        total, idle = _parse_cpu_counters(Path("/proc/stat").read_text(encoding="utf-8"))
+        result["cpu_total_jiffies"] = total
+        result["cpu_idle_jiffies"] = idle
+    except OSError:
+        pass
+    try:
+        interface = _parse_default_interface(Path("/proc/net/route").read_text(encoding="utf-8"))
+        if interface:
+            base = Path("/sys/class/net") / interface / "statistics"
+            result["network_interface"] = interface
+            result["network_rx_bytes"] = int((base / "rx_bytes").read_text(encoding="utf-8").strip())
+            result["network_tx_bytes"] = int((base / "tx_bytes").read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        pass
+    try:
+        read_bytes, write_bytes = _parse_diskstats(Path("/proc/diskstats").read_text(encoding="utf-8"))
+        result["disk_read_bytes"] = read_bytes
+        result["disk_write_bytes"] = write_bytes
+    except OSError:
+        pass
+    return result
+
+
 def collect_local_status(config: dict[str, Any], now: int | None = None) -> dict[str, Any]:
     observed_at = int(now if now is not None else time.time())
     service_names = [str(item) for item in config.get("services", []) if item]
@@ -211,8 +289,12 @@ def collect_local_status(config: dict[str, Any], now: int | None = None) -> dict
     try:
         disk = shutil.disk_usage("/")
         disk_percent = round(100 * disk.used / disk.total, 1)
+        disk_total_bytes = disk.total
+        disk_free_bytes = disk.free
     except OSError:
         disk_percent = None
+        disk_total_bytes = None
+        disk_free_bytes = None
     try:
         load_average = [round(value, 2) for value in os.getloadavg()]
     except (AttributeError, OSError):
@@ -228,7 +310,10 @@ def collect_local_status(config: dict[str, Any], now: int | None = None) -> dict
         "load_average": load_average,
         "memory_used_percent": _memory_percent(),
         "disk_used_percent": disk_percent,
-        "agent_version": "2.0.0",
+        "disk_total_bytes": disk_total_bytes,
+        "disk_free_bytes": disk_free_bytes,
+        **_local_io_counters(),
+        "agent_version": "2.1.0",
         "seen_by": [str(config["node_id"])],
     }
 

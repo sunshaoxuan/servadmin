@@ -4,10 +4,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Server Desk</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230f766e'/%3E%3Ctext x='32' y='39' font-size='22' text-anchor='middle' font-family='Arial' font-weight='700' fill='white'%3ESD%3C/text%3E%3C/svg%3E" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%23fc6d26'/%3E%3Ctext x='32' y='39' font-size='22' text-anchor='middle' font-family='Arial' font-weight='700' fill='white'%3ESD%3C/text%3E%3C/svg%3E" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/core@1.0.0-beta20/dist/css/tabler.min.css" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.28.1/dist/tabler-icons.min.css" />
-    <link rel="stylesheet" href="static/styles.css?v=20260730-quality1" />
+    <link rel="stylesheet" href="static/styles.css?v=20260814-dashboard1" />
   </head>
   <body>
     <main id="loginView" class="login-screen">
@@ -34,7 +34,8 @@
           </div>
         </div>
         <nav class="nav-list">
-          <button class="nav-item active" data-tab="servers"><i class="ti ti-server-2"></i><span>服务器</span></button>
+          <button class="nav-item active" data-tab="dashboard"><i class="ti ti-layout-dashboard"></i><span>监控首页</span></button>
+          <button class="nav-item" data-tab="servers"><i class="ti ti-server-2"></i><span>服务器资产</span></button>
           <button class="nav-item" data-tab="audit"><i class="ti ti-activity"></i><span>审计</span></button>
           <button class="nav-item" data-tab="settings"><i class="ti ti-settings"></i><span>设置</span></button>
         </nav>
@@ -47,7 +48,8 @@
       <section class="ops-workspace">
         <header class="page-bar">
           <div>
-            <h1 id="pageTitle">服务器管理</h1>
+            <div class="page-kicker"><i class="ti ti-home"></i><span>Overview</span><i class="ti ti-chevron-right"></i></div>
+            <h1 id="pageTitle">运行监控</h1>
             <p id="summaryText">载入中</p>
           </div>
           <div class="toolbar">
@@ -65,46 +67,68 @@
         </header>
 
         <nav class="mobile-tabs">
-          <button class="mobile-tab active" data-tab="servers"><i class="ti ti-server-2"></i><span>服务器</span></button>
+          <button class="mobile-tab active" data-tab="dashboard"><i class="ti ti-layout-dashboard"></i><span>监控</span></button>
+          <button class="mobile-tab" data-tab="servers"><i class="ti ti-server-2"></i><span>资产</span></button>
           <button class="mobile-tab" data-tab="audit"><i class="ti ti-activity"></i><span>审计</span></button>
           <button class="mobile-tab" data-tab="settings"><i class="ti ti-settings"></i><span>设置</span></button>
         </nav>
 
-        <section id="serversView" class="tab-panel">
+        <section id="dashboardView" class="tab-panel">
         <section class="overview-strip">
           <div class="metric-card">
             <span class="metric-icon metric-total"><i class="ti ti-server-2"></i></span>
             <div>
-              <span>总数</span>
+              <span>生产节点</span>
               <strong id="metricTotal">0</strong>
-              <small id="tableCount">0 台可见</small>
+              <small id="tableCount">0 台纳入监控</small>
             </div>
           </div>
           <div class="metric-card">
             <span class="metric-icon metric-online"><i class="ti ti-activity-heartbeat"></i></span>
             <div>
-              <span>在线</span>
+              <span>心跳在线</span>
               <strong id="metricOnline">0</strong>
-              <small>SSH 可达</small>
+              <small>当前样本有效</small>
             </div>
           </div>
           <div class="metric-card">
             <span class="metric-icon metric-pending"><i class="ti ti-clock-hour-4"></i></span>
             <div>
-              <span>待确认</span>
+              <span>需要关注</span>
               <strong id="metricUnknown">0</strong>
-              <small id="metricOffline">0 台离线</small>
+              <small id="metricOffline">含延迟与离线</small>
             </div>
           </div>
           <div class="metric-card wide">
             <span class="metric-icon metric-check"><i class="ti ti-calendar-check"></i></span>
             <div>
-              <span>最近检查</span>
-              <strong id="metricLast">无</strong>
-              <small id="metricChecked">状态刷新记录</small>
+              <span>月流量已接入</span>
+              <strong id="metricLast">0 / 0</strong>
+              <small id="metricChecked">供应商套餐读数</small>
             </div>
           </div>
         </section>
+
+        <section class="fleet-panel card">
+          <div class="section-head fleet-head">
+            <div>
+              <span class="section-eyebrow"><i class="ti ti-chart-histogram"></i> Fleet observability</span>
+              <h2>服务器运行概览</h2>
+              <p>心跳、资源空间、实时 IO 与供应商月度流量统一展示</p>
+            </div>
+            <div class="dashboard-legend">
+              <span><i class="legend-dot online"></i>在线</span>
+              <span><i class="legend-dot delayed"></i>延迟</span>
+              <span><i class="legend-dot offline"></i>离线</span>
+            </div>
+          </div>
+          <div id="monitorGrid" class="monitor-grid">
+            <div class="service-loading">正在载入监控数据</div>
+          </div>
+        </section>
+        </section>
+
+        <section id="serversView" class="tab-panel hidden">
 
         <section class="main-grid">
           <div class="content-column">
@@ -373,6 +397,34 @@
       </form>
     </dialog>
 
-    <script src="static/app.js?v=20260730-quality1"></script>
+    <dialog id="trafficDialog" class="traffic-dialog">
+      <form id="trafficForm" method="dialog" class="server-form">
+        <div class="dialog-head">
+          <div>
+            <span class="section-eyebrow">Provider usage</span>
+            <h2>更新月度订阅流量</h2>
+          </div>
+          <button type="button" id="closeTrafficDialog" class="btn btn-light btn-icon" title="关闭"><i class="ti ti-x"></i></button>
+        </div>
+        <input type="hidden" id="trafficServerId" />
+        <p id="trafficServerName" class="dialog-intro"></p>
+        <div class="form-grid">
+          <label>计费周期开始<input id="trafficPeriodStart" type="date" required /></label>
+          <label>计费周期结束<input id="trafficPeriodEnd" type="date" required /></label>
+          <label>已用流量 GB<input id="trafficUsedGb" type="number" min="0" step="0.001" required /></label>
+          <label>套餐流量 GB<input id="trafficQuotaGb" type="number" min="0.001" step="0.001" required /></label>
+          <label>数据来源<input id="trafficSourceLabel" placeholder="例如 Riven Cloud 控制台" required /></label>
+          <label>管理画面地址<input id="trafficSourceUrl" type="url" placeholder="https://provider.example/servers" /></label>
+        </div>
+        <div class="source-note"><i class="ti ti-shield-check"></i>仅保存管理画面显示的权威读数、周期和来源地址，不在此表单保存供应商密码。</div>
+        <div class="dialog-actions">
+          <span class="spacer"></span>
+          <button type="button" id="cancelTrafficBtn" class="btn btn-light">取消</button>
+          <button type="submit" class="btn btn-primary">保存读数</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="static/app.js?v=20260814-dashboard1"></script>
   </body>
 </html>
