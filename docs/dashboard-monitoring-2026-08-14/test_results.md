@@ -15,6 +15,7 @@
 | Riven Cloud 登录、单点登录、月度流量解析与持久化 | 通过 |
 | OrangeVPS 登录、GiB 流量解析、自然月账期与持久化 | 通过 |
 | 供应商精确重置时间、IANA 时区与东京时间换算 | 通过 |
+| 缺少系统时区数据库时使用项目 `tzdata` 依赖 | 通过 |
 | 未支持连接器拒绝 | 通过 |
 | CPU 与 IO 速率计算 | 通过 |
 | Linux CPU、路由和磁盘统计解析 | 通过 |
@@ -41,17 +42,19 @@ VMISS 时区验证截图：`docs/assets/provider-timezone-local-20260814.png`
 
 OrangeVPS 同步控制截图：`docs/assets/provider-orange-sync-control-20260814.png`
 
+OrangeVPS 生产同步截图：`docs/assets/provider-orange-sync-production-20260814.png`
+
 ## 生产验证
 
 | 项目 | 状态 |
 | --- | --- |
-| 发布提交 | `d797a4b` |
+| 发布提交 | `c7334ac` |
 | 自动发布服务 | `success` |
 | 健康接口 | 正常 |
 | 版本 5 迁移 | 已应用 |
 | 七台错误口径账本记录 | 0 条 |
 | 生产活性汇总 | 7/7 在线 |
-| 供应商真实读数 | 2/7，Riven Cloud 与 VMISS 已录入真实账期、额度和用量 |
+| 供应商真实读数 | 3/7，Riven Cloud、VMISS 与 OrangeVPS 已录入真实账期、额度和用量 |
 | 生产静态资源 | 新供应商文案存在，旧 Agent 套餐文案不存在 |
 | Riven Cloud 自动同步 | 成功，2026-07-24 至 2026-08-23，355.60 GB / 1024 GB |
 | 供应商凭据普通响应 | 密码字段不存在，`has_provider_password=true` |
@@ -59,3 +62,5 @@ OrangeVPS 同步控制截图：`docs/assets/provider-orange-sync-control-2026081
 | VMISS 时区原始值 | `2026-08-24T08:03:17-04:00`，`America/Toronto` |
 | VMISS 东京换算 | 2026-08-24 21:03:17 JST |
 | VMISS 生产页面控制台 | 0 项警告或错误 |
+| OrangeVPS 自动同步 | 成功，2026-08-01 至 2026-08-31，原始 163.55 GiB / 5000 GiB，页面 175.6 GB / 5.4 TB |
+| OrangeVPS 生产页面控制台 | 0 项警告或错误 |

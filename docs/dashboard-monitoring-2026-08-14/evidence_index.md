@@ -21,4 +21,5 @@
 | VMISS 生产时区截图 | `docs/assets/provider-timezone-production-20260814.png` | 生产卡片的 332.1 GB、27.7% 与双时区重置时间验证 |
 | Riven Cloud 连接器 | `app/provider_sync.py` | 客户区登录、单点登录、流量读取、快照更新和同步状态 |
 | OrangeVPS 同步控制截图 | `docs/assets/provider-orange-sync-control-20260814.png` | OrangeVPS 服务编号、服务器标识、遮蔽密码和立即同步按钮验证 |
+| OrangeVPS 生产同步截图 | `docs/assets/provider-orange-sync-production-20260814.png` | 生产卡片的 175.6 GB、3.3%、自然月账期与原始 GiB 来源验证 |
 | OrangeVPS 连接器 | `app/provider_sync.py` | 客户区登录、SolusVM2 GiB 读数、自然月账期和同步状态 |

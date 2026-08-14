@@ -5,3 +5,4 @@ python-multipart==0.0.20
 pytest==8.3.4
 httpx==0.28.1
 paramiko==3.5.1
+tzdata==2026.3
