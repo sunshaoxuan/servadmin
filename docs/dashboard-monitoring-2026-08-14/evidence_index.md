@@ -15,4 +15,6 @@
 | 供应商数据边界截图 | `docs/assets/dashboard-provider-usage-source-20260814.png` | 无供应商读数时不显示网卡推算套餐量，独立周期读数正常展示 |
 | 供应商凭据档案截图 | `docs/assets/provider-access-archive-20260814.png` | 供应商入口、用户、服务编号、服务器标识、同步状态和遮蔽密码展示 |
 | 供应商同步控制截图 | `docs/assets/provider-sync-control-20260814.png` | Riven Cloud 自动连接器与立即同步按钮验证 |
+| 生产供应商流量截图 | `docs/assets/provider-sync-production-20260814.png` | 七台生产卡片、355.6 GB 真实读数与 34.7% 占比验证 |
+| 生产供应商档案截图 | `docs/assets/provider-access-production-20260814.png` | 管理用户、服务编号、服务器标识、同步状态与遮蔽密码验证 |
 | Riven Cloud 连接器 | `app/provider_sync.py` | 客户区登录、单点登录、流量读取、快照更新和同步状态 |
