@@ -478,6 +478,7 @@ function renderDetail() {
   $("detailSshWindowsKeyPath").textContent = s.ssh_windows_key_path || "未设置";
   $("detailSshOptions").textContent = s.ssh_options || "未设置";
   renderPanelConnection(s);
+  renderProviderConnection(s);
   $("detailServiceCode").textContent = s.service_code || "未设置";
   $("detailProviderRegion").textContent = [s.provider, s.region].filter(Boolean).join(" / ") || "未设置";
   $("detailTags").innerHTML = (s.tags || []).map((t) => `<span class="tag">${escapeHtml(t)}</span>`).join("") || "未设置";
@@ -522,6 +523,7 @@ function renderDetail() {
   renderSshCommands(s);
   renderCredentialField(s);
   renderPanelPasswordField(s);
+  renderProviderPasswordField(s);
   $("retiredNotice").classList.toggle("hidden", !s.is_retired);
   renderActionButtons(s);
 }
@@ -830,16 +832,18 @@ function reportSectionHtml(section) {
 function openForm(server = null) {
   $("dialogTitle").textContent = server ? "编辑服务器" : "新增服务器";
   $("serverId").value = server?.id || "";
-  for (const id of ["name", "hostname", "ipv4", "ipv6", "provider", "region", "login_user", "auth_type", "ssh_host", "ssh_port", "ssh_key_path", "ssh_local_key_path", "ssh_windows_key_path", "ssh_options", "panel_url", "panel_username", "service_code", "heartbeat_port", "notes"]) {
+  for (const id of ["name", "hostname", "ipv4", "ipv6", "provider", "region", "login_user", "auth_type", "ssh_host", "ssh_port", "ssh_key_path", "ssh_local_key_path", "ssh_windows_key_path", "ssh_options", "panel_url", "panel_username", "service_code", "provider_portal_url", "provider_username", "provider_service_id", "provider_server_id", "provider_connector", "heartbeat_port", "notes"]) {
     $(id).value = server?.[id] || "";
   }
   $("ssh_port").value = server?.ssh_port || 22;
   $("heartbeat_port").value = server?.heartbeat_port || 9108;
   $("heartbeat_enabled").checked = Boolean(server?.heartbeat_enabled);
+  $("provider_sync_enabled").checked = Boolean(server?.provider_sync_enabled);
   $("is_starred").checked = Boolean(server?.is_starred);
   $("is_retired").checked = Boolean(server?.is_retired);
   $("tags").value = (server?.tags || []).join(", ");
   $("panel_password").value = "";
+  $("provider_password").value = "";
   $("credential").value = "";
   $("deleteBtn").classList.toggle("hidden", !server);
   $("serverDialog").showModal();
@@ -889,6 +893,13 @@ function payloadFromForm() {
     panel_username: $("panel_username").value.trim(),
     panel_password: $("panel_password").value,
     service_code: $("service_code").value.trim(),
+    provider_portal_url: $("provider_portal_url").value.trim(),
+    provider_username: $("provider_username").value.trim(),
+    provider_password: $("provider_password").value,
+    provider_service_id: $("provider_service_id").value.trim(),
+    provider_server_id: $("provider_server_id").value.trim(),
+    provider_connector: $("provider_connector").value,
+    provider_sync_enabled: $("provider_sync_enabled").checked,
     heartbeat_enabled: $("heartbeat_enabled").checked,
     heartbeat_port: Number($("heartbeat_port").value || 9108),
     is_starred: $("is_starred").checked,
@@ -911,6 +922,28 @@ function renderPanelConnection(server) {
     link.classList.add("disabled-link");
   }
   $("detailPanelUser").textContent = server.panel_username || "未设置";
+}
+
+function renderProviderConnection(server) {
+  const link = $("detailProviderPortalUrl");
+  if (server.provider_portal_url) {
+    link.href = server.provider_portal_url;
+    link.textContent = server.provider_portal_url;
+    link.classList.remove("disabled-link");
+  } else {
+    link.removeAttribute("href");
+    link.textContent = "未设置";
+    link.classList.add("disabled-link");
+  }
+  $("detailProviderUsername").textContent = server.provider_username || "未设置";
+  $("detailProviderServiceId").textContent = server.provider_service_id || "未设置";
+  $("detailProviderServerId").textContent = server.provider_server_id || "未设置";
+  const syncLabel = ({ ok: "同步正常", failed: "同步失败", pending: "等待首次同步", unconfigured: "未配置" })[server.last_sync_status]
+    || server.last_sync_status
+    || "未配置";
+  $("detailProviderSyncStatus").textContent = server.last_synced_at
+    ? `${syncLabel} · ${formatDateTime(server.last_synced_at)}`
+    : syncLabel;
 }
 
 function renderSshCommands(server) {
@@ -968,6 +1001,30 @@ function renderPanelPasswordField(server) {
   loadConnectionSecret(server.id);
 }
 
+function renderProviderPasswordField(server) {
+  const input = $("detailProviderPassword");
+  input.type = "password";
+  updateProviderPasswordToggle(false);
+  if (!server.provider_portal_url && !server.provider_username && !server.has_provider_password) {
+    input.value = "";
+    input.placeholder = "未设置供应商后台";
+    $("providerPasswordStatus").textContent = "这台服务器没有保存供应商后台资料。";
+    return;
+  }
+  const cached = Object.prototype.hasOwnProperty.call(state.connectionSecrets, server.id);
+  if (cached) {
+    const value = state.connectionSecrets[server.id]?.provider_password || "";
+    input.value = value;
+    input.placeholder = value ? "" : "未保存供应商密码";
+    $("providerPasswordStatus").textContent = value ? "供应商密码已加载，默认遮蔽显示。" : "这台服务器没有保存供应商密码。";
+    return;
+  }
+  input.value = "";
+  input.placeholder = "正在加载供应商密码";
+  $("providerPasswordStatus").textContent = "正在从加密存储中读取供应商密码。";
+  loadConnectionSecret(server.id);
+}
+
 async function loadCredential(serverId, options = {}) {
   if (!options.force && Object.prototype.hasOwnProperty.call(state.credentials, serverId)) {
     return state.credentials[serverId];
@@ -1017,6 +1074,10 @@ async function loadConnectionSecret(serverId, options = {}) {
         $("detailPanelPassword").value = value;
         $("detailPanelPassword").placeholder = value ? "" : "未保存面板密码";
         $("panelPasswordStatus").textContent = value ? "面板密码已加载，默认遮蔽显示。" : "这台服务器没有保存面板密码。";
+        const providerValue = data.provider_password || "";
+        $("detailProviderPassword").value = providerValue;
+        $("detailProviderPassword").placeholder = providerValue ? "" : "未保存供应商密码";
+        $("providerPasswordStatus").textContent = providerValue ? "供应商密码已加载，默认遮蔽显示。" : "这台服务器没有保存供应商密码。";
       }
       state.audit = await api("/api/audit");
       renderAudit();
@@ -1027,8 +1088,11 @@ async function loadConnectionSecret(serverId, options = {}) {
         $("detailPanelPassword").value = "";
         $("detailPanelPassword").placeholder = "面板密码读取失败";
         $("panelPasswordStatus").textContent = error.message || "面板密码读取失败。";
+        $("detailProviderPassword").value = "";
+        $("detailProviderPassword").placeholder = "供应商密码读取失败";
+        $("providerPasswordStatus").textContent = error.message || "供应商密码读取失败。";
       }
-      return { credential: "", panel_password: "" };
+      return { credential: "", panel_password: "", provider_password: "" };
     })
     .finally(() => {
       delete state.connectionSecretRequests[serverId];
@@ -1049,6 +1113,12 @@ function updatePanelPasswordToggle(visible) {
   $("togglePanelPasswordBtn").title = visible ? "隐藏面板密码" : "显示面板密码";
 }
 
+function updateProviderPasswordToggle(visible) {
+  const icon = $("toggleProviderPasswordBtn").querySelector("i");
+  icon.className = visible ? "ti ti-eye-off" : "ti ti-eye";
+  $("toggleProviderPasswordBtn").title = visible ? "隐藏供应商密码" : "显示供应商密码";
+}
+
 async function showCredential(visible) {
   const s = selected();
   if (!s) return;
@@ -1065,6 +1135,15 @@ async function showPanelPassword(visible) {
   $("detailPanelPassword").type = visible ? "text" : "password";
   updatePanelPasswordToggle(visible);
   $("panelPasswordStatus").textContent = visible ? "面板密码正在明文显示。" : "面板密码已加载，默认遮蔽显示。";
+}
+
+async function showProviderPassword(visible) {
+  const s = selected();
+  if (!s) return;
+  await loadConnectionSecret(s.id);
+  $("detailProviderPassword").type = visible ? "text" : "password";
+  updateProviderPasswordToggle(visible);
+  $("providerPasswordStatus").textContent = visible ? "供应商密码正在明文显示。" : "供应商密码已加载，默认遮蔽显示。";
 }
 
 function authLabel(value) {
@@ -1409,6 +1488,10 @@ $("togglePanelPasswordBtn").addEventListener("click", async () => {
   await showPanelPassword($("detailPanelPassword").type === "password");
 });
 
+$("toggleProviderPasswordBtn").addEventListener("click", async () => {
+  await showProviderPassword($("detailProviderPassword").type === "password");
+});
+
 $("copyPanelPasswordBtn").addEventListener("click", async () => {
   const s = selected();
   if (!s) return;
@@ -1420,6 +1503,19 @@ $("copyPanelPasswordBtn").addEventListener("click", async () => {
   }
   await navigator.clipboard.writeText(value);
   $("panelPasswordStatus").textContent = "面板密码已复制。";
+});
+
+$("copyProviderPasswordBtn").addEventListener("click", async () => {
+  const s = selected();
+  if (!s) return;
+  const data = await loadConnectionSecret(s.id);
+  const value = data.provider_password || "";
+  if (!value) {
+    $("providerPasswordStatus").textContent = "这台服务器没有保存供应商密码。";
+    return;
+  }
+  await navigator.clipboard.writeText(value);
+  $("providerPasswordStatus").textContent = "供应商密码已复制。";
 });
 
 $("copyCredentialBtn").addEventListener("click", async () => {

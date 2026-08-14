@@ -13,3 +13,4 @@
 | 浏览器截图 | `docs/assets/dashboard-monitoring-20260814.png` | 桌面页面验证 |
 | 生产浏览器截图 | `docs/assets/dashboard-monitoring-production-20260814.png` | 七台生产卡片与在线汇总验证 |
 | 供应商数据边界截图 | `docs/assets/dashboard-provider-usage-source-20260814.png` | 无供应商读数时不显示网卡推算套餐量，独立周期读数正常展示 |
+| 供应商凭据档案截图 | `docs/assets/provider-access-archive-20260814.png` | 供应商入口、用户、服务编号、服务器标识、同步状态和遮蔽密码展示 |

@@ -71,6 +71,13 @@ class ServerPayload(BaseModel):
     panel_username: Optional[str] = ""
     panel_password: Optional[str] = ""
     service_code: Optional[str] = ""
+    provider_portal_url: Optional[str] = None
+    provider_username: Optional[str] = None
+    provider_password: Optional[str] = None
+    provider_service_id: Optional[str] = None
+    provider_server_id: Optional[str] = None
+    provider_connector: Optional[str] = None
+    provider_sync_enabled: Optional[bool] = None
     is_starred: bool = False
     is_retired: bool = False
     heartbeat_enabled: bool = False
@@ -99,6 +106,103 @@ def db():
 
 def cipher() -> CredentialCipher:
     return CredentialCipher(CREDENTIAL_KEY)
+
+
+def server_response(conn, row) -> dict[str, Any]:
+    server = row_to_server(row)
+    access = conn.execute(
+        """
+        select portal_url, login_username, password_encrypted, service_reference,
+               external_server_id, connector_type, sync_enabled, last_sync_status,
+               last_sync_message, last_synced_at
+        from server_provider_access where server_id = ?
+        """,
+        (server["id"],),
+    ).fetchone()
+    if access:
+        provider_access = dict(access)
+        provider_access["provider_portal_url"] = provider_access.pop("portal_url") or ""
+        provider_access["provider_username"] = provider_access.pop("login_username") or ""
+        provider_access["provider_service_id"] = provider_access.pop("service_reference") or ""
+        provider_access["provider_server_id"] = provider_access.pop("external_server_id") or ""
+        provider_access["provider_connector"] = provider_access.pop("connector_type") or "browser"
+        provider_access["provider_sync_enabled"] = bool(provider_access.pop("sync_enabled"))
+        provider_access["has_provider_password"] = bool(provider_access.pop("password_encrypted"))
+        server.update(provider_access)
+    else:
+        server.update(
+            {
+                "provider_portal_url": "",
+                "provider_username": "",
+                "provider_service_id": "",
+                "provider_server_id": "",
+                "provider_connector": "browser",
+                "provider_sync_enabled": False,
+                "has_provider_password": False,
+                "last_sync_status": "unconfigured",
+                "last_sync_message": "",
+                "last_synced_at": None,
+            }
+        )
+    return server
+
+
+def save_provider_access(conn, server_id: int, payload: ServerPayload, c: CredentialCipher) -> None:
+    existing = conn.execute(
+        "select * from server_provider_access where server_id = ?",
+        (server_id,),
+    ).fetchone()
+    supplied = any(
+        value not in (None, "")
+        for value in (
+            payload.provider_portal_url,
+            payload.provider_username,
+            payload.provider_password,
+            payload.provider_service_id,
+            payload.provider_server_id,
+        )
+    )
+    if not existing and not supplied:
+        return
+    old = dict(existing) if existing else {}
+    password_encrypted = old.get("password_encrypted", "")
+    if payload.provider_password:
+        password_encrypted = c.encrypt(payload.provider_password)
+    values = {
+        "portal_url": payload.provider_portal_url if payload.provider_portal_url is not None else old.get("portal_url", ""),
+        "login_username": payload.provider_username if payload.provider_username is not None else old.get("login_username", ""),
+        "service_reference": payload.provider_service_id if payload.provider_service_id is not None else old.get("service_reference", ""),
+        "external_server_id": payload.provider_server_id if payload.provider_server_id is not None else old.get("external_server_id", ""),
+        "connector_type": payload.provider_connector if payload.provider_connector is not None else old.get("connector_type", "browser"),
+        "sync_enabled": payload.provider_sync_enabled if payload.provider_sync_enabled is not None else bool(old.get("sync_enabled", 1)),
+    }
+    conn.execute(
+        """
+        insert into server_provider_access(
+          server_id, portal_url, login_username, password_encrypted, service_reference,
+          external_server_id, connector_type, sync_enabled
+        ) values (?, ?, ?, ?, ?, ?, ?, ?)
+        on conflict(server_id) do update set
+          portal_url=excluded.portal_url,
+          login_username=excluded.login_username,
+          password_encrypted=excluded.password_encrypted,
+          service_reference=excluded.service_reference,
+          external_server_id=excluded.external_server_id,
+          connector_type=excluded.connector_type,
+          sync_enabled=excluded.sync_enabled,
+          updated_at=current_timestamp
+        """,
+        (
+            server_id,
+            values["portal_url"] or "",
+            values["login_username"] or "",
+            password_encrypted,
+            values["service_reference"] or "",
+            values["external_server_id"] or "",
+            values["connector_type"] or "browser",
+            1 if values["sync_enabled"] else 0,
+        ),
+    )
 
 
 def session_codec() -> SessionCodec:
@@ -1431,7 +1535,7 @@ def logout(response: Response, user=Depends(current_user)):
 @app.get("/api/servers")
 def list_servers(user=Depends(current_user), conn=Depends(db)):
     rows = conn.execute("select * from servers order by is_starred desc, updated_at desc, id desc").fetchall()
-    return [row_to_server(row) for row in rows]
+    return [server_response(conn, row) for row in rows]
 
 
 @app.post("/api/servers")
@@ -1472,11 +1576,12 @@ def create_server(payload: ServerPayload, user=Depends(current_user), conn=Depen
             c.encrypt(payload.credential),
         ),
     )
-    conn.commit()
     server_id = cur.lastrowid
+    save_provider_access(conn, server_id, payload, c)
+    conn.commit()
     audit(conn, user["username"], "create", "server", server_id, payload.hostname)
     row = conn.execute("select * from servers where id = ?", (server_id,)).fetchone()
-    return row_to_server(row)
+    return server_response(conn, row)
 
 
 @app.put("/api/servers/{server_id}")
@@ -1524,10 +1629,11 @@ def update_server(server_id: int, payload: ServerPayload, user=Depends(current_u
             server_id,
         ),
     )
+    save_provider_access(conn, server_id, payload, c)
     conn.commit()
     audit(conn, user["username"], "update", "server", server_id, payload.hostname)
     row = conn.execute("select * from servers where id = ?", (server_id,)).fetchone()
-    return row_to_server(row)
+    return server_response(conn, row)
 
 
 @app.delete("/api/servers/{server_id}")
@@ -1651,7 +1757,7 @@ def run_and_store_inspection(server_id: int, user, conn, c, include_quality: boo
     conn.commit()
     audit(conn, user["username"], audit_action, "server", server_id, summary)
     row = conn.execute("select * from servers where id = ?", (server_id,)).fetchone()
-    return row_to_server(row)
+    return server_response(conn, row)
 
 
 @app.post("/api/servers/{server_id}/inspect")
@@ -1681,10 +1787,15 @@ def reveal_connection_secret(server_id: int, user=Depends(current_user), conn=De
     ).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="server not found")
+    provider_row = conn.execute(
+        "select password_encrypted from server_provider_access where server_id = ?",
+        (server_id,),
+    ).fetchone()
     audit(conn, user["username"], "reveal_connection_secret", "server", server_id)
     return {
         "credential": c.decrypt(row["credential_encrypted"]),
         "panel_password": c.decrypt(row["panel_password_encrypted"]),
+        "provider_password": c.decrypt(provider_row["password_encrypted"]) if provider_row else "",
     }
 
 

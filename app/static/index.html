@@ -251,6 +251,22 @@
                     <small id="panelPasswordStatus">面板密码加密存储。</small>
                   </div>
                   <div class="credential-card">
+                    <h3>VPS 供应商后台</h3>
+                    <dl class="facts compact-facts">
+                      <dt>地址</dt><dd><a id="detailProviderPortalUrl" href="#" target="_blank" rel="noreferrer">未设置</a></dd>
+                      <dt>管理用户</dt><dd id="detailProviderUsername"></dd>
+                      <dt>服务编号</dt><dd id="detailProviderServiceId"></dd>
+                      <dt>服务器标识</dt><dd id="detailProviderServerId"></dd>
+                      <dt>同步状态</dt><dd id="detailProviderSyncStatus"></dd>
+                    </dl>
+                    <div class="credential-line">
+                      <input id="detailProviderPassword" type="password" readonly autocomplete="off" placeholder="未加载供应商密码" />
+                      <button id="toggleProviderPasswordBtn" class="btn btn-light btn-icon" type="button" title="显示供应商密码"><i class="ti ti-eye"></i></button>
+                      <button id="copyProviderPasswordBtn" class="btn btn-light btn-icon" type="button" title="复制供应商密码"><i class="ti ti-copy"></i></button>
+                    </div>
+                    <small id="providerPasswordStatus">供应商密码加密存储。</small>
+                  </div>
+                  <div class="credential-card">
                     <h3>凭据</h3>
                     <div class="credential-line">
                       <input id="detailCredential" type="password" readonly autocomplete="off" placeholder="正在加载凭据" />
@@ -379,6 +395,12 @@
           <label>1Panel 地址<input id="panel_url" placeholder="http://host:port/entrance" /></label>
           <label>1Panel 用户<input id="panel_username" /></label>
           <label>服务代码<input id="service_code" /></label>
+          <label>供应商后台地址<input id="provider_portal_url" placeholder="https://provider.example/clientarea" /></label>
+          <label>供应商管理用户<input id="provider_username" autocomplete="off" /></label>
+          <label>供应商服务编号<input id="provider_service_id" /></label>
+          <label>供应商服务器标识<input id="provider_server_id" /></label>
+          <label>供应商连接器<select id="provider_connector"><option value="browser">浏览器后台</option><option value="api">官方 API</option></select></label>
+          <label class="checkbox-field"><input id="provider_sync_enabled" type="checkbox" /> 启用供应商流量同步</label>
           <label>标签<input id="tags" placeholder="prod, tokyo, web" /></label>
           <label>心跳端口<input id="heartbeat_port" type="number" min="1" max="65535" value="9108" /></label>
           <label class="checkbox-field"><input id="heartbeat_enabled" type="checkbox" /> 启用分布式心跳</label>
@@ -386,6 +408,7 @@
           <label class="checkbox-field"><input id="is_retired" type="checkbox" /> 已失效</label>
         </div>
         <label>1Panel 密码<input id="panel_password" type="password" placeholder="编辑时留空表示不修改" /></label>
+        <label>供应商管理密码<input id="provider_password" type="password" autocomplete="new-password" placeholder="编辑时留空表示不修改" /></label>
         <label>凭据<input id="credential" type="password" placeholder="密码、密钥口令或需要加密保存的连接凭据，编辑时留空表示不修改" /></label>
         <label>备注<textarea id="notes" rows="4"></textarea></label>
         <div class="dialog-actions">
@@ -425,6 +448,6 @@
       </form>
     </dialog>
 
-    <script src="static/app.js?v=20260814-provider-usage1"></script>
+    <script src="static/app.js?v=20260814-provider-access1"></script>
   </body>
 </html>

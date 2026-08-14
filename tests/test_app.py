@@ -43,6 +43,7 @@ def test_version_3_clears_existing_agent_billing_meter_for_safe_rollback(tmp_pat
         init_db(conn)
 
         assert conn.execute("select count(*) from schema_migrations where version = 3").fetchone()[0] == 1
+        assert conn.execute("select count(*) from schema_migrations where version = 4").fetchone()[0] == 1
         assert conn.execute("select count(*) from server_traffic_meter").fetchone()[0] == 0
     finally:
         conn.close()
@@ -82,6 +83,13 @@ def test_login_create_reveal_and_audit():
                 "panel_username": "panel-admin",
                 "panel_password": "panel-secret",
                 "service_code": "113801369753",
+                "provider_portal_url": "https://provider.example/clientarea",
+                "provider_username": "ops@example.com",
+                "provider_password": "provider-secret",
+                "provider_service_id": "service-23492",
+                "provider_server_id": "server-baf47198",
+                "provider_connector": "browser",
+                "provider_sync_enabled": True,
                 "is_starred": True,
                 "tags": ["tokyo", "prod"],
                 "notes": "seeded test host",
@@ -100,6 +108,14 @@ def test_login_create_reveal_and_audit():
         assert body["panel_url"] == "http://127.0.0.1:8091/entrance"
         assert body["panel_username"] == "panel-admin"
         assert body["has_panel_password"] is True
+        assert body["provider_portal_url"] == "https://provider.example/clientarea"
+        assert body["provider_username"] == "ops@example.com"
+        assert body["provider_service_id"] == "service-23492"
+        assert body["provider_server_id"] == "server-baf47198"
+        assert body["provider_sync_enabled"] is True
+        assert body["has_provider_password"] is True
+        assert "provider_password" not in body
+        assert "password_encrypted" not in body
         assert "panel_password_encrypted" not in body
         assert body["is_starred"] is True
         assert body["is_retired"] is False
@@ -113,6 +129,16 @@ def test_login_create_reveal_and_audit():
         response = client.get(f"/api/servers/{body['id']}/connection-secret")
         assert response.status_code == 200
         assert response.json()["panel_password"] == "panel-secret"
+        assert response.json()["provider_password"] == "provider-secret"
+
+        updated = client.put(
+            f"/api/servers/{body['id']}",
+            json={**body, "credential": "", "panel_password": "", "provider_password": ""},
+        )
+        assert updated.status_code == 200
+        response = client.get(f"/api/servers/{body['id']}/connection-secret")
+        assert response.json()["panel_password"] == "panel-secret"
+        assert response.json()["provider_password"] == "provider-secret"
 
         response = client.get("/api/audit")
         assert response.status_code == 200
@@ -283,11 +309,13 @@ def test_dashboard_combines_heartbeat_io_space_and_subscription_usage():
             assert conn.execute("select count(*) from schema_migrations where version = 1").fetchone()[0] == 1
             assert conn.execute("select count(*) from schema_migrations where version = 2").fetchone()[0] == 1
             assert conn.execute("select count(*) from schema_migrations where version = 3").fetchone()[0] == 1
+            assert conn.execute("select count(*) from schema_migrations where version = 4").fetchone()[0] == 1
             assert conn.execute("select count(*) from server_traffic_meter").fetchone()[0] == 0
             init_db(conn)
             assert conn.execute("select count(*) from schema_migrations where version = 1").fetchone()[0] == 1
             assert conn.execute("select count(*) from schema_migrations where version = 2").fetchone()[0] == 1
             assert conn.execute("select count(*) from schema_migrations where version = 3").fetchone()[0] == 1
+            assert conn.execute("select count(*) from schema_migrations where version = 4").fetchone()[0] == 1
         finally:
             conn.close()
     finally:
@@ -352,7 +380,7 @@ def test_static_and_index_are_not_cached():
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
         assert "static/styles.css?v=20260814-dashboard1" in response.text
-        assert "static/app.js?v=20260814-provider-usage1" in response.text
+        assert "static/app.js?v=20260814-provider-access1" in response.text
         assert 'id="detailCredential"' in response.text
         assert 'id="settingsView"' in response.text
         assert 'id="showRetiredToggle"' in response.text

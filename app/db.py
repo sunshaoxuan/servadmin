@@ -155,6 +155,27 @@ MIGRATIONS = [
         delete from server_traffic_meter;
         """,
     ),
+    (
+        4,
+        "server provider access archive",
+        """
+        create table if not exists server_provider_access (
+          server_id integer primary key references servers(id) on delete cascade,
+          portal_url text,
+          login_username text,
+          password_encrypted text,
+          service_reference text,
+          external_server_id text,
+          connector_type text not null default 'browser',
+          sync_enabled integer not null default 1,
+          last_sync_status text not null default 'pending',
+          last_sync_message text,
+          last_synced_at text,
+          created_at text not null default current_timestamp,
+          updated_at text not null default current_timestamp
+        );
+        """,
+    ),
 ]
 
 SERVER_MIGRATIONS = {
