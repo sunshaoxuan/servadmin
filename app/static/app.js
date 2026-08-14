@@ -966,7 +966,7 @@ function renderProviderConnection(server) {
     ? `${syncLabel} · ${formatDateTime(server.last_synced_at)}`
     : syncLabel;
   const syncButton = $("syncProviderUsageBtn");
-  syncButton.disabled = !server.provider_sync_enabled || server.provider_connector !== "riven_cloud";
+  syncButton.disabled = !server.provider_sync_enabled || !["riven_cloud", "orangevps"].includes(server.provider_connector);
   syncButton.title = syncButton.disabled ? "当前供应商尚未配置自动连接器" : "立即从供应商后台更新账期与流量";
 }
 
@@ -1546,7 +1546,7 @@ $("copyProviderPasswordBtn").addEventListener("click", async () => {
 
 $("syncProviderUsageBtn").addEventListener("click", async () => {
   const s = selected();
-  if (!s || !s.provider_sync_enabled || s.provider_connector !== "riven_cloud") return;
+  if (!s || !s.provider_sync_enabled || !["riven_cloud", "orangevps"].includes(s.provider_connector)) return;
   const button = $("syncProviderUsageBtn");
   button.disabled = true;
   button.innerHTML = '<i class="ti ti-loader-2 spin"></i>同步中';
@@ -1563,7 +1563,7 @@ $("syncProviderUsageBtn").addEventListener("click", async () => {
   } finally {
     button.innerHTML = '<i class="ti ti-refresh"></i>立即同步供应商流量';
     const current = selected();
-    button.disabled = !current?.provider_sync_enabled || current?.provider_connector !== "riven_cloud";
+    button.disabled = !current?.provider_sync_enabled || !["riven_cloud", "orangevps"].includes(current?.provider_connector);
   }
 });
 

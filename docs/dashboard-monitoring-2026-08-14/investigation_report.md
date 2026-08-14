@@ -67,6 +67,8 @@ Agent 版本更新为 2.1.0，新增以下累计值：
 
 `GET /api/dashboard` 返回所有有效服务器的卡片数据与汇总。活性状态使用当前样本年龄和分布式心跳确认结果。`PUT /api/servers/{id}/subscription-usage` 保存供应商月度流量并记录审计。
 
+OrangeVPS 节点使用 WHMCS 服务编号 `10807` 和 SolusVM2 服务模块。客户区服务详情提供 `Total traffic`，当前原始读数为 163.55 GiB / 5000 GiB。连接器按 1024 的三次方换算为字节，保留原始 GiB 文本用于对账。OrangeVPS 公开服务条款说明所有 VPS 在自然月开始时重置流量，配额只计算出站流量。客户区的只读状态和用量请求使用 `clientarea.php?action=productdetails&id={service_id}`，连接器只读取服务详情，不调用开机、关机、重装或密码重置动作。
+
 保存供应商读数时只更新对应服务器和对应账期的权威快照。页面不会在该读数上叠加 Agent 网卡增量。
 
 Riven Cloud 连接器通过 `portal.sa.net` 客户区登录，调用 VirtFusion Direct 的 `loginAsServerOwner` 单点登录，再从 `cloud.sa.net/server/{内部编号}/resource/traffic.json` 读取 `monthlyRaw`。连接器校验固定域名、数字服务编号、UUID 服务器标识、当前周期和返回结构。后台默认每 6 小时运行，连接页同时提供立即同步入口。失败状态和安全截断后的错误原因写入供应商档案。

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from calendar import monthrange
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
@@ -15,7 +17,8 @@ from .security import CredentialCipher
 
 RIVEN_PORTAL_ORIGIN = "https://portal.sa.net"
 RIVEN_CLOUD_ORIGIN = "https://cloud.sa.net"
-SUPPORTED_CONNECTORS = {"riven_cloud"}
+ORANGE_PORTAL_ORIGIN = "https://portal.orangevps.com"
+SUPPORTED_CONNECTORS = {"riven_cloud", "orangevps"}
 
 
 class ProviderSyncError(RuntimeError):
@@ -109,6 +112,81 @@ def _riven_usage(
             "tx_bytes": int(row.get("tx") or 0),
             "used_bytes": int(row.get("total") or 0),
             "source_url": f"{RIVEN_CLOUD_ORIGIN}/server/{external_server_id}",
+            "source_label": "Riven Cloud 自动同步",
+            "created_by": "provider-sync:riven-cloud",
+        }
+
+
+def _validate_orange_access(access: sqlite3.Row, password: str) -> None:
+    if not password:
+        raise ProviderSyncError("provider password is not configured")
+    if not re.fullmatch(r"\d+", access["service_reference"] or ""):
+        raise ProviderSyncError("OrangeVPS service id is invalid")
+    if not re.fullmatch(r"[A-Za-z0-9.-]{3,255}", access["external_server_id"] or ""):
+        raise ProviderSyncError("OrangeVPS server id is invalid")
+    portal_host = urlparse(access["portal_url"] or ORANGE_PORTAL_ORIGIN).hostname
+    if portal_host != "portal.orangevps.com":
+        raise ProviderSyncError("OrangeVPS portal host is invalid")
+
+
+def _orange_usage(
+    access: sqlite3.Row,
+    password: str,
+    client_factory: Callable[..., httpx.Client] = httpx.Client,
+) -> dict[str, Any]:
+    _validate_orange_access(access, password)
+    service_id = access["service_reference"]
+    with client_factory(
+        follow_redirects=True,
+        timeout=25,
+        headers={"User-Agent": "ServerDeskProviderSync/1.0"},
+    ) as client:
+        login_page = client.get(f"{ORANGE_PORTAL_ORIGIN}/login")
+        login_page.raise_for_status()
+        token = _required_match(r'name="token"[^>]*value="([^"]+)"', login_page.text, "login token")
+        login = client.post(
+            f"{ORANGE_PORTAL_ORIGIN}/login",
+            data={
+                "token": token,
+                "username": access["login_username"],
+                "password": password,
+                "rememberme": "on",
+            },
+        )
+        login.raise_for_status()
+        if not re.search(r"Logged in as:|登入為:", login.text, flags=re.IGNORECASE):
+            raise ProviderSyncError("OrangeVPS login failed")
+        source_url = f"{ORANGE_PORTAL_ORIGIN}/clientarea.php?action=productdetails&id={service_id}"
+        detail = client.get(source_url)
+        detail.raise_for_status()
+        traffic = re.search(
+            r"Total\s+traffic.*?([0-9.]+)\s*GiB.*?/\s*([0-9.]+)\s*GiB",
+            detail.text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if not traffic:
+            raise ProviderSyncError("OrangeVPS monthly traffic is unavailable")
+        try:
+            used_gib = Decimal(traffic.group(1))
+            quota_gib = Decimal(traffic.group(2))
+        except InvalidOperation as exc:
+            raise ProviderSyncError("OrangeVPS traffic values are invalid") from exc
+        if used_gib < 0 or quota_gib <= 0:
+            raise ProviderSyncError("OrangeVPS traffic values are invalid")
+        gibibyte = Decimal(1024**3)
+        today = datetime.now(timezone.utc).date()
+        period_start = today.replace(day=1)
+        period_end = today.replace(day=monthrange(today.year, today.month)[1])
+        raw_usage = f"{used_gib} GiB / {quota_gib} GiB"
+        return {
+            "period_start": period_start.isoformat(),
+            "period_end": period_end.isoformat(),
+            "used_bytes": int(used_gib * gibibyte),
+            "quota_bytes": int(quota_gib * gibibyte),
+            "source_url": source_url,
+            "source_label": f"OrangeVPS 自动同步 · 原始 {raw_usage}",
+            "created_by": "provider-sync:orangevps",
+            "raw_usage": raw_usage,
         }
 
 
@@ -131,18 +209,22 @@ def sync_provider_usage(
     try:
         if connector == "riven_cloud":
             usage = _riven_usage(access, password, client_factory)
+        elif connector == "orangevps":
+            usage = _orange_usage(access, password, client_factory)
         else:
             raise ProviderSyncError(f"provider connector is not supported: {connector}")
-        latest = conn.execute(
-            """
-            select quota_bytes from server_subscription_usage
-            where server_id = ? order by collected_at desc, id desc limit 1
-            """,
-            (server_id,),
-        ).fetchone()
-        if not latest or not int(latest["quota_bytes"] or 0):
-            raise ProviderSyncError("provider traffic quota is not configured")
-        quota_bytes = int(latest["quota_bytes"])
+        quota_bytes = int(usage.get("quota_bytes") or 0)
+        if not quota_bytes:
+            latest = conn.execute(
+                """
+                select quota_bytes from server_subscription_usage
+                where server_id = ? order by collected_at desc, id desc limit 1
+                """,
+                (server_id,),
+            ).fetchone()
+            if not latest or not int(latest["quota_bytes"] or 0):
+                raise ProviderSyncError("provider traffic quota is not configured")
+            quota_bytes = int(latest["quota_bytes"])
         conn.execute(
             """
             insert into server_subscription_usage(
@@ -163,9 +245,9 @@ def sync_provider_usage(
                 usage["period_end"],
                 usage["used_bytes"],
                 quota_bytes,
-                "Riven Cloud 自动同步",
+                usage["source_label"],
                 usage["source_url"],
-                "provider-sync:riven-cloud",
+                usage["created_by"],
             ),
         )
         conn.execute(
@@ -175,7 +257,7 @@ def sync_provider_usage(
                 last_synced_at = current_timestamp, updated_at = current_timestamp
             where server_id = ?
             """,
-            (f"{usage['used_bytes']} / {quota_bytes} bytes", server_id),
+            (usage.get("raw_usage") or f"{usage['used_bytes']} / {quota_bytes} bytes", server_id),
         )
         conn.commit()
         return {**usage, "quota_bytes": quota_bytes, "connector": connector, "status": "ok"}
@@ -202,7 +284,7 @@ def sync_all_provider_usage(db_path: str | Path, credential_key: str) -> list[di
         rows = conn.execute(
             """
             select server_id from server_provider_access
-            where sync_enabled = 1 and connector_type in ('riven_cloud')
+            where sync_enabled = 1 and connector_type in ('riven_cloud', 'orangevps')
             order by server_id
             """
         ).fetchall()

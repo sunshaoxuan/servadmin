@@ -98,6 +98,8 @@ Agent V2 依据邻居版本水位发送最多 64 条增量记录，正常周期�
 
 Riven Cloud 连接器使用客户区登录、VirtFusion 单点登录和供应商流量接口读取实际周期、接收、发送与总量。连接器使用最近一次供应商限额作为当前套餐额度，同周期读数执行更新。连接页可以手工立即同步，后台默认在启动 30 秒后执行一次，之后每 6 小时同步。`OPS_PROVIDER_SYNC_ENABLED=0` 可停用后台同步，`OPS_PROVIDER_SYNC_INTERVAL_SECONDS` 可调整周期，最短为 900 秒。
 
+OrangeVPS 连接器登录客户区并读取 SolusVM2 服务详情中的 `Total traffic`。供应商以 GiB 展示用量与限额，连接器按二进制单位换算为准确字节数，来源标签保留供应商原始 GiB 数值。OrangeVPS 服务条款规定流量在每个自然月开始时重置，且只有出站流量计入配额，因此连接器按自然月保存独立账期。
+
 数据库迁移由 `schema_migrations` 记录。版本 1 创建供应商读数表。版本 2 曾创建 Agent 套餐账本，版本 3 根据数据边界纠正清空错误口径数据。版本 4 创建供应商后台加密档案。版本 5 增加供应商精确重置时刻和 IANA 时区。运行代码不再读写 Agent 套餐账本。该表结构在本次发布观察期内保留，用于上一版本的短期回滚安全，稳定后由独立迁移删除。迁移均可重复检查。发布回滚前应先备份 SQLite 数据库。
 
 当前部署路径为 `https://ccnode.briconbric.com/server-desk/`。Nginx 使用 `/etc/letsencrypt/live/briconbric.com/fullchain.pem` 和 `/etc/letsencrypt/live/briconbric.com/privkey.pem` 的通用证书。

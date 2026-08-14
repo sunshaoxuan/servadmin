@@ -1,4 +1,7 @@
 import sqlite3
+from calendar import monthrange
+from datetime import datetime, timezone
+from decimal import Decimal
 
 import httpx
 
@@ -33,6 +36,24 @@ def seeded_provider(conn: sqlite3.Connection, connector: str = "riven_cloud") ->
                   'provider baseline', '', 'test')
         """,
         (server_id,),
+    )
+    conn.commit()
+    return server_id
+
+
+def seeded_orange_provider(conn: sqlite3.Connection) -> int:
+    server_id = conn.execute(
+        "insert into servers(name, hostname, provider, login_user) values ('orange', 'host1782378673.orangevps', 'OrangeVPS', 'root')"
+    ).lastrowid
+    conn.execute(
+        """
+        insert into server_provider_access(
+          server_id, portal_url, login_username, password_encrypted,
+          service_reference, external_server_id, connector_type, sync_enabled
+        ) values (?, 'https://portal.orangevps.com/clientarea.php', 'orange@example.com', ?,
+                  '10807', 'host1782378673.orangevps', 'orangevps', 1)
+        """,
+        (server_id, CredentialCipher(KEY).encrypt("orange-secret")),
     )
     conn.commit()
     return server_id
@@ -110,6 +131,60 @@ def test_riven_connector_logs_in_through_sso_and_persists_monthly_usage(tmp_path
     assert snapshot["source_label"] == "Riven Cloud 自动同步"
     assert snapshot["created_by"] == "provider-sync:riven-cloud"
     assert access["last_sync_status"] == "ok"
+    assert access["last_synced_at"] is not None
+
+
+def test_orange_connector_reads_gib_values_and_persists_calendar_month(tmp_path):
+    db_path = tmp_path / "orange-provider-sync.sqlite3"
+    conn = connect(db_path)
+    init_db(conn)
+    server_id = seeded_orange_provider(conn)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "portal.orangevps.com" and request.url.path == "/login" and request.method == "GET":
+            return httpx.Response(200, text='<input name="token" value="orange-csrf">')
+        if request.url.host == "portal.orangevps.com" and request.url.path == "/login" and request.method == "POST":
+            assert b"username=orange%40example.com" in request.content
+            assert b"password=orange-secret" in request.content
+            return httpx.Response(200, text="Logged in as:")
+        if request.url.host == "portal.orangevps.com" and request.url.path == "/clientarea.php":
+            assert request.url.params["action"] == "productdetails"
+            assert request.url.params["id"] == "10807"
+            return httpx.Response(
+                200,
+                text="<table><tr><td>Total traffic</td><td>163.55 GiB / 5000 GiB</td></tr></table>",
+            )
+        raise AssertionError(f"unexpected request: {request.method} {request.url}")
+
+    transport = httpx.MockTransport(handler)
+
+    def client_factory(**kwargs):
+        return httpx.Client(transport=transport, **kwargs)
+
+    result = sync_provider_usage(conn, CredentialCipher(KEY), server_id, client_factory)
+    snapshot = conn.execute(
+        "select * from server_subscription_usage where server_id = ?",
+        (server_id,),
+    ).fetchone()
+    access = conn.execute(
+        "select last_sync_status, last_sync_message, last_synced_at from server_provider_access where server_id = ?",
+        (server_id,),
+    ).fetchone()
+    conn.close()
+
+    today = datetime.now(timezone.utc).date()
+    expected_used = int(Decimal("163.55") * Decimal(1024**3))
+    expected_quota = 5000 * 1024**3
+    assert result["used_bytes"] == expected_used
+    assert result["quota_bytes"] == expected_quota
+    assert snapshot["period_start"] == today.replace(day=1).isoformat()
+    assert snapshot["period_end"] == today.replace(day=monthrange(today.year, today.month)[1]).isoformat()
+    assert snapshot["used_bytes"] == expected_used
+    assert snapshot["quota_bytes"] == expected_quota
+    assert snapshot["source_label"] == "OrangeVPS 自动同步 · 原始 163.55 GiB / 5000 GiB"
+    assert snapshot["created_by"] == "provider-sync:orangevps"
+    assert access["last_sync_status"] == "ok"
+    assert access["last_sync_message"] == "163.55 GiB / 5000 GiB"
     assert access["last_synced_at"] is not None
 
 

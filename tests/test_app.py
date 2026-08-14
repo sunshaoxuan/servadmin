@@ -401,7 +401,7 @@ def test_static_and_index_are_not_cached():
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
         assert "static/styles.css?v=20260814-dashboard1" in response.text
-        assert "static/app.js?v=20260814-provider-reset1" in response.text
+        assert "static/app.js?v=20260814-provider-orange1" in response.text
         assert 'id="trafficNextResetAt"' in response.text
         assert 'id="trafficResetTimezone"' in response.text
         assert 'id="detailCredential"' in response.text
