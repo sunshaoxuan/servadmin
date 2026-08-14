@@ -27,6 +27,27 @@ def make_client():
     return TestClient(main.app), db_file.name
 
 
+def test_version_3_clears_existing_agent_billing_meter_for_safe_rollback(tmp_path):
+    conn = connect(tmp_path / "migration-v2.sqlite3")
+    try:
+        conn.execute(
+            "create table schema_migrations(version integer primary key, name text not null, applied_at text default current_timestamp)"
+        )
+        conn.execute("insert into schema_migrations(version, name) values (1, 'server subscription usage')")
+        conn.execute("insert into schema_migrations(version, name) values (2, 'automatic monthly traffic meter')")
+        conn.execute("create table server_traffic_meter(id integer primary key, measured_rx_bytes integer)")
+        conn.execute("create index idx_traffic_meter_server_period on server_traffic_meter(id)")
+        conn.execute("insert into server_traffic_meter(measured_rx_bytes) values (123456)")
+        conn.commit()
+
+        init_db(conn)
+
+        assert conn.execute("select count(*) from schema_migrations where version = 3").fetchone()[0] == 1
+        assert conn.execute("select count(*) from server_traffic_meter").fetchone()[0] == 0
+    finally:
+        conn.close()
+
+
 def test_git_sync_waits_for_application_health():
     script = (Path(__file__).parents[1] / "scripts" / "server_desk_git_sync.sh").read_text(encoding="utf-8")
 
@@ -247,7 +268,6 @@ def test_dashboard_combines_heartbeat_io_space_and_subscription_usage():
                 "quota_gb": 1024,
                 "source_label": "Riven Cloud 管理画面",
                 "source_url": "https://example.invalid/server/usage",
-                "count_mode": "outbound",
             },
         )
         assert saved.status_code == 200
@@ -255,19 +275,19 @@ def test_dashboard_combines_heartbeat_io_space_and_subscription_usage():
         assert subscription["used_bytes"] == 128_500_000_000
         assert subscription["quota_bytes"] == 1_024_000_000_000
         assert subscription["used_percent"] == 12.5
-        assert subscription["automatic"] is True
-        assert subscription["is_partial"] is False
-        assert subscription["count_mode"] == "outbound"
+        assert subscription["authority"] == "provider"
         assert saved.json()["dashboard"]["summary"]["subscription_ready"] == 1
-        assert saved.json()["dashboard"]["summary"]["automatic_metering"] == 1
 
         conn = connect(db_path)
         try:
             assert conn.execute("select count(*) from schema_migrations where version = 1").fetchone()[0] == 1
             assert conn.execute("select count(*) from schema_migrations where version = 2").fetchone()[0] == 1
+            assert conn.execute("select count(*) from schema_migrations where version = 3").fetchone()[0] == 1
+            assert conn.execute("select count(*) from server_traffic_meter").fetchone()[0] == 0
             init_db(conn)
             assert conn.execute("select count(*) from schema_migrations where version = 1").fetchone()[0] == 1
             assert conn.execute("select count(*) from schema_migrations where version = 2").fetchone()[0] == 1
+            assert conn.execute("select count(*) from schema_migrations where version = 3").fetchone()[0] == 1
         finally:
             conn.close()
     finally:
@@ -332,7 +352,7 @@ def test_static_and_index_are_not_cached():
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
         assert "static/styles.css?v=20260814-dashboard1" in response.text
-        assert "static/app.js?v=20260814-dashboard1" in response.text
+        assert "static/app.js?v=20260814-provider-usage1" in response.text
         assert 'id="detailCredential"' in response.text
         assert 'id="settingsView"' in response.text
         assert 'id="showRetiredToggle"' in response.text

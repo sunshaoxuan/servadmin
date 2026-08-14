@@ -773,8 +773,8 @@ def test_network_trend_score_uses_freshness_and_peer_visibility():
     assert network_trend_score(0.0, None, 0, 6) == 0.0
 
 
-def test_mesh_cycle_persists_automatic_monthly_traffic_and_handles_counter_reset(tmp_path):
-    db_path = tmp_path / "ops-traffic.sqlite3"
+def test_mesh_cycle_does_not_treat_interface_counters_as_provider_usage(tmp_path):
+    db_path = tmp_path / "ops-provider-usage.sqlite3"
     conn = connect(db_path)
     try:
         init_db(conn)
@@ -801,24 +801,14 @@ def test_mesh_cycle_persists_automatic_monthly_traffic_and_handles_counter_reset
         record_mesh_cycle(conn, [server], {str(server_id): {"self": first}}, sampled_at=1_786_675_200)
         record_mesh_cycle(conn, [server], {str(server_id): {"self": second}}, sampled_at=1_786_675_260)
         record_mesh_cycle(conn, [server], {str(server_id): {"self": reset}}, sampled_at=1_786_675_320)
-        meter = conn.execute(
-            """
-            select measured_rx_bytes, measured_tx_bytes, last_rx_counter,
-                   last_tx_counter, is_partial
-            from server_traffic_meter where server_id = ?
-            """,
+        provider_usage_count = conn.execute(
+            "select count(*) from server_subscription_usage where server_id = ?",
             (server_id,),
-        ).fetchone()
+        ).fetchone()[0]
     finally:
         conn.close()
 
-    assert dict(meter) == {
-        "measured_rx_bytes": 700,
-        "measured_tx_bytes": 1_400,
-        "last_rx_counter": 100,
-        "last_tx_counter": 200,
-        "is_partial": 1,
-    }
+    assert provider_usage_count == 0
 
 
 def test_deployment_monitors_custom_services_even_when_currently_stopped():

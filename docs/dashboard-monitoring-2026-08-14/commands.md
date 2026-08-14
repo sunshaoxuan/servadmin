@@ -3,7 +3,7 @@
 ## 本地验证
 
 ```powershell
-python -m pytest -q --basetemp=.test-output\traffic-meter
+python -m pytest -q --basetemp=.test-output\provider-usage
 python -m compileall -q app scripts tests
 node --check app\static\app.js
 git diff --check

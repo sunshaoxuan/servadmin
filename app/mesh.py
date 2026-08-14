@@ -10,7 +10,6 @@ import urllib.request
 from typing import Any, Callable, Iterable
 
 from .db import connect, init_db
-from .traffic import update_traffic_meter
 
 
 DEFAULT_HEARTBEAT_PORT = 9108
@@ -302,8 +301,6 @@ def record_mesh_cycle(
             """,
             values,
         )
-        if payload:
-            update_traffic_meter(conn, server_id, payload)
         recorded.append(
             {
                 "server_id": server_id,

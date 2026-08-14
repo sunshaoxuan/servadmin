@@ -148,6 +148,13 @@ MIGRATIONS = [
         on server_traffic_meter(server_id, period_end desc);
         """,
     ),
+    (
+        3,
+        "disable agent billing traffic meter",
+        """
+        delete from server_traffic_meter;
+        """,
+    ),
 ]
 
 SERVER_MIGRATIONS = {

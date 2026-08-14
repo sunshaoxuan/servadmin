@@ -13,7 +13,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, List, Literal, Optional
+from typing import Any, List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
@@ -25,7 +25,6 @@ from .db import connect, init_db, row_to_server
 from .dashboard import dashboard_snapshot
 from .mesh import DEFAULT_INTERVAL_SECONDS, fetch_peer_report, mesh_health_history, poll_mesh_once
 from .security import CredentialCipher, SessionCodec, hash_password, verify_password
-from .traffic import reset_traffic_meter_from_provider
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -88,7 +87,6 @@ class SubscriptionUsagePayload(BaseModel):
     quota_gb: float = Field(gt=0)
     source_label: str = Field(min_length=1, max_length=120)
     source_url: Optional[AnyHttpUrl] = None
-    count_mode: Literal["both", "outbound"] = "both"
 
 
 def db():
@@ -1582,16 +1580,6 @@ def save_subscription_usage(
             str(payload.source_url) if payload.source_url else "",
             user["username"],
         ),
-    )
-    reset_traffic_meter_from_provider(
-        conn,
-        server_id,
-        payload.period_start,
-        payload.period_end,
-        used_bytes,
-        quota_bytes,
-        payload.source_label,
-        payload.count_mode,
     )
     conn.commit()
     audit(

@@ -83,50 +83,13 @@ def _traffic_usage(conn, server_id: int) -> dict[str, Any] | None:
         """,
         (server_id,),
     ).fetchone()
-    meter_row = conn.execute(
-        """
-        select period_start, period_end, base_used_bytes, quota_bytes,
-               measured_rx_bytes, measured_tx_bytes, source_label,
-               count_mode, baseline_collected_at, is_partial, initialized_at, updated_at
-        from server_traffic_meter
-        where server_id = ?
-        order by period_end desc, updated_at desc, id desc
-        limit 1
-        """,
-        (server_id,),
-    ).fetchone()
     provider = dict(provider_row) if provider_row else None
-    if meter_row:
-        meter = dict(meter_row)
-        measured = int(meter["measured_tx_bytes"] or 0)
-        if meter["count_mode"] == "both":
-            measured += int(meter["measured_rx_bytes"] or 0)
-        used = int(meter["base_used_bytes"] or 0) + measured
-        quota = int(meter["quota_bytes"] or 0)
-        return {
-            "period_start": meter["period_start"],
-            "period_end": meter["period_end"],
-            "used_bytes": used,
-            "quota_bytes": quota or None,
-            "used_percent": round(100.0 * used / quota, 1) if quota > 0 else None,
-            "source_label": meter["source_label"],
-            "source_url": provider["source_url"] if provider else "",
-            "collected_at": meter["baseline_collected_at"],
-            "meter_updated_at": meter["updated_at"],
-            "meter_initialized_at": meter["initialized_at"],
-            "measured_rx_bytes": int(meter["measured_rx_bytes"] or 0),
-            "measured_tx_bytes": int(meter["measured_tx_bytes"] or 0),
-            "count_mode": meter["count_mode"],
-            "automatic": True,
-            "is_partial": bool(meter["is_partial"]),
-        }
     if not provider:
         return None
     quota = int(provider["quota_bytes"] or 0)
     used = int(provider["used_bytes"] or 0)
     provider["used_percent"] = round(100.0 * used / quota, 1) if quota > 0 else None
-    provider["automatic"] = False
-    provider["is_partial"] = False
+    provider["authority"] = "provider"
     return provider
 
 
@@ -203,9 +166,6 @@ def dashboard_snapshot(conn) -> dict[str, Any]:
     online = sum(1 for item in cards if item["state"] == "online")
     attention = sum(1 for item in cards if item["state"] in {"offline", "delayed", "pending"})
     traffic_ready = sum(1 for item in cards if item["subscription"] and item["subscription"].get("quota_bytes"))
-    automatic_metering = sum(
-        1 for item in cards if item["subscription"] and item["subscription"].get("automatic")
-    )
     return {
         "generated_at": generated_at,
         "summary": {
@@ -213,7 +173,6 @@ def dashboard_snapshot(conn) -> dict[str, Any]:
             "online": online,
             "attention": attention,
             "subscription_ready": traffic_ready,
-            "automatic_metering": automatic_metering,
         },
         "servers": cards,
     }
