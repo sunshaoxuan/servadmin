@@ -214,6 +214,15 @@ def test_dashboard_combines_heartbeat_io_space_and_subscription_usage():
                     """,
                     (created["id"], sampled_at, json.dumps({"self": self_data})),
                 )
+            conn.execute(
+                """
+                insert into mesh_health_samples(
+                  server_id, sampled_at, network_score, app_score, direct_ok,
+                  peer_visible, peer_expected, details_json
+                ) values (?, ?, 100, 100, 1, 2, 2, ?)
+                """,
+                (created["id"], now + 1, json.dumps({"self": self_data})),
+            )
             conn.commit()
         finally:
             conn.close()

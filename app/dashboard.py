@@ -50,17 +50,25 @@ def _latest_samples(conn, server_id: int) -> list[dict[str, Any]]:
         from mesh_health_samples
         where server_id = ?
         order by sampled_at desc
-        limit 2
+        limit 12
         """,
         (server_id,),
     ).fetchall()
-    result = []
-    for row in reversed(rows):
+    newest_distinct = []
+    seen_observations = set()
+    for row in rows:
         sample = dict(row)
         sample["details"] = json.loads(sample.pop("details_json") or "{}")
         sample["self"] = sample["details"].get("self") or {}
-        result.append(sample)
-    return result
+        observed_at = sample["self"].get("observed_at")
+        observation_key = ("observed", observed_at) if observed_at is not None else ("sampled", sample["sampled_at"])
+        if observation_key in seen_observations:
+            continue
+        seen_observations.add(observation_key)
+        newest_distinct.append(sample)
+        if len(newest_distinct) == 2:
+            break
+    return list(reversed(newest_distinct))
 
 
 def _latest_subscription(conn, server_id: int) -> dict[str, Any] | None:
