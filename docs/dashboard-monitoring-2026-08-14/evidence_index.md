@@ -11,3 +11,4 @@
 | 视觉系统 | `app/static/styles.css` | One人事配色与参考图布局 |
 | 单元测试 | `tests/test_app.py`、`tests/test_heartbeat_mesh.py` | 数据链路与解析验证 |
 | 浏览器截图 | `docs/assets/dashboard-monitoring-20260814.png` | 桌面页面验证 |
+| 生产浏览器截图 | `docs/assets/dashboard-monitoring-production-20260814.png` | 七台生产卡片与在线汇总验证 |
