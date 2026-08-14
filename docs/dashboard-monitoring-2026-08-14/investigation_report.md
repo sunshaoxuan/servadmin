@@ -67,6 +67,8 @@ Agent 版本更新为 2.1.0，新增以下累计值：
 
 保存供应商读数时只更新对应服务器和对应账期的权威快照。页面不会在该读数上叠加 Agent 网卡增量。
 
+Riven Cloud 连接器通过 `portal.sa.net` 客户区登录，调用 VirtFusion Direct 的 `loginAsServerOwner` 单点登录，再从 `cloud.sa.net/server/{内部编号}/resource/traffic.json` 读取 `monthlyRaw`。连接器校验固定域名、数字服务编号、UUID 服务器标识、当前周期和返回结构。后台默认每 6 小时运行，连接页同时提供立即同步入口。失败状态和安全截断后的错误原因写入供应商档案。
+
 ### 界面
 
 监控首页成为默认页签。服务器资产改为独立页签。每个服务器卡片包含：

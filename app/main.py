@@ -24,6 +24,7 @@ import paramiko
 from .db import connect, init_db, row_to_server
 from .dashboard import dashboard_snapshot
 from .mesh import DEFAULT_INTERVAL_SECONDS, fetch_peer_report, mesh_health_history, poll_mesh_once
+from .provider_sync import ProviderSyncError, sync_all_provider_usage, sync_provider_usage
 from .security import CredentialCipher, SessionCodec, hash_password, verify_password
 
 
@@ -34,6 +35,8 @@ CREDENTIAL_KEY = os.environ.get("OPS_CREDENTIAL_KEY", CredentialCipher.generate_
 MESH_SECRET = os.environ.get("OPS_MESH_SECRET", "").strip()
 MESH_ENABLED = os.environ.get("OPS_MESH_ENABLED", "0") == "1" and len(MESH_SECRET) >= 32
 MESH_INTERVAL_SECONDS = max(60, int(os.environ.get("OPS_MESH_INTERVAL_SECONDS", str(DEFAULT_INTERVAL_SECONDS))))
+PROVIDER_SYNC_ENABLED = os.environ.get("OPS_PROVIDER_SYNC_ENABLED", "1") == "1"
+PROVIDER_SYNC_INTERVAL_SECONDS = max(900, int(os.environ.get("OPS_PROVIDER_SYNC_INTERVAL_SECONDS", "21600")))
 SESSION_COOKIE = "ops_session"
 SYSTEMD_CHECKS = [
     {"id": "server-desk", "name": "Server Desk", "unit": "server-desk.service", "category": "system"},
@@ -1428,10 +1431,23 @@ async def mesh_monitor_loop() -> None:
         await asyncio.sleep(MESH_INTERVAL_SECONDS)
 
 
+async def provider_sync_loop() -> None:
+    await asyncio.sleep(30)
+    while True:
+        try:
+            await asyncio.to_thread(sync_all_provider_usage, DB_PATH, CREDENTIAL_KEY)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"provider sync failed: {exc}", file=sys.stderr, flush=True)
+        await asyncio.sleep(PROVIDER_SYNC_INTERVAL_SECONDS)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     bootstrap()
     monitor_task = asyncio.create_task(mesh_monitor_loop()) if MESH_ENABLED else None
+    provider_task = asyncio.create_task(provider_sync_loop()) if PROVIDER_SYNC_ENABLED else None
     try:
         yield
     finally:
@@ -1439,6 +1455,12 @@ async def lifespan(_app: FastAPI):
             monitor_task.cancel()
             try:
                 await monitor_task
+            except asyncio.CancelledError:
+                pass
+        if provider_task:
+            provider_task.cancel()
+            try:
+                await provider_task
             except asyncio.CancelledError:
                 pass
 
@@ -1697,6 +1719,35 @@ def save_subscription_usage(
         f"{payload.used_gb:g}/{payload.quota_gb:g} GB via {payload.source_label}",
     )
     return {"ok": True, "dashboard": dashboard_snapshot(conn)}
+
+
+@app.post("/api/servers/{server_id}/provider-sync")
+def sync_server_provider_usage(
+    server_id: int,
+    user=Depends(current_user),
+    conn=Depends(db),
+    c=Depends(cipher),
+):
+    try:
+        result = sync_provider_usage(conn, c, server_id)
+    except ProviderSyncError as exc:
+        audit(conn, user["username"], "provider_sync_failed", "server", server_id, str(exc))
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    audit(
+        conn,
+        user["username"],
+        "provider_sync",
+        "server",
+        server_id,
+        f"{result['used_bytes']}/{result['quota_bytes']} bytes via {result['connector']}",
+    )
+    row = conn.execute("select * from servers where id = ?", (server_id,)).fetchone()
+    return {
+        "ok": True,
+        "usage": result,
+        "server": server_response(conn, row),
+        "dashboard": dashboard_snapshot(conn),
+    }
 
 
 @app.post("/api/servers/{server_id}/check")

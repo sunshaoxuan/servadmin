@@ -944,6 +944,9 @@ function renderProviderConnection(server) {
   $("detailProviderSyncStatus").textContent = server.last_synced_at
     ? `${syncLabel} · ${formatDateTime(server.last_synced_at)}`
     : syncLabel;
+  const syncButton = $("syncProviderUsageBtn");
+  syncButton.disabled = !server.provider_sync_enabled || server.provider_connector !== "riven_cloud";
+  syncButton.title = syncButton.disabled ? "当前供应商尚未配置自动连接器" : "立即从供应商后台更新账期与流量";
 }
 
 function renderSshCommands(server) {
@@ -1516,6 +1519,29 @@ $("copyProviderPasswordBtn").addEventListener("click", async () => {
   }
   await navigator.clipboard.writeText(value);
   $("providerPasswordStatus").textContent = "供应商密码已复制。";
+});
+
+$("syncProviderUsageBtn").addEventListener("click", async () => {
+  const s = selected();
+  if (!s || !s.provider_sync_enabled || s.provider_connector !== "riven_cloud") return;
+  const button = $("syncProviderUsageBtn");
+  button.disabled = true;
+  button.innerHTML = '<i class="ti ti-loader-2 spin"></i>同步中';
+  $("providerPasswordStatus").textContent = "正在登录供应商后台并读取流量。";
+  try {
+    const result = await api(`/api/servers/${s.id}/provider-sync`, { method: "POST" });
+    state.dashboard = result.dashboard;
+    const index = state.servers.findIndex((item) => item.id === s.id);
+    if (index >= 0) state.servers[index] = result.server;
+    $("providerPasswordStatus").textContent = "供应商流量同步成功。";
+    render();
+  } catch (error) {
+    $("providerPasswordStatus").textContent = error.message || "供应商流量同步失败。";
+  } finally {
+    button.innerHTML = '<i class="ti ti-refresh"></i>立即同步供应商流量';
+    const current = selected();
+    button.disabled = !current?.provider_sync_enabled || current?.provider_connector !== "riven_cloud";
+  }
 });
 
 $("copyCredentialBtn").addEventListener("click", async () => {
