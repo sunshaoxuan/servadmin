@@ -643,6 +643,7 @@ def test_all_report_sources_failed_records_collection_gap_without_node_outages(t
 
 def test_successful_poll_wins_over_failed_retry_in_same_minute(tmp_path):
     now = int(time.time())
+    now -= now % 60
     db_path = tmp_path / "ops-same-minute.sqlite3"
     conn = connect(db_path)
     try:
