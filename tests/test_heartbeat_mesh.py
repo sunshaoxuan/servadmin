@@ -16,6 +16,7 @@ from app.mesh import (
     mesh_health_history,
     network_trend_score,
     poll_mesh_once,
+    record_mesh_cycle,
     _latest_payload,
 )
 from scripts import heartbeat_protocol as protocol
@@ -769,6 +770,54 @@ def test_network_trend_score_uses_freshness_and_peer_visibility():
     assert older_heartbeat < more_witnesses
     assert 0 < delayed < 100
     assert network_trend_score(0.0, None, 0, 6) == 0.0
+
+
+def test_mesh_cycle_persists_automatic_monthly_traffic_and_handles_counter_reset(tmp_path):
+    db_path = tmp_path / "ops-traffic.sqlite3"
+    conn = connect(db_path)
+    try:
+        init_db(conn)
+        cursor = conn.execute(
+            "insert into servers(name, hostname, login_user, heartbeat_enabled) values ('node-1', 'node-1', 'root', 1)"
+        )
+        server_id = cursor.lastrowid
+        server = {"id": server_id, "name": "node-1"}
+        first = {
+            **heartbeat(server_id, 1_786_675_200, [str(server_id)]),
+            "network_rx_bytes": 1_000,
+            "network_tx_bytes": 2_000,
+        }
+        second = {
+            **heartbeat(server_id, 1_786_675_260, [str(server_id)]),
+            "network_rx_bytes": 1_600,
+            "network_tx_bytes": 3_200,
+        }
+        reset = {
+            **heartbeat(server_id, 1_786_675_320, [str(server_id)]),
+            "network_rx_bytes": 100,
+            "network_tx_bytes": 200,
+        }
+        record_mesh_cycle(conn, [server], {str(server_id): {"self": first}}, sampled_at=1_786_675_200)
+        record_mesh_cycle(conn, [server], {str(server_id): {"self": second}}, sampled_at=1_786_675_260)
+        record_mesh_cycle(conn, [server], {str(server_id): {"self": reset}}, sampled_at=1_786_675_320)
+        meter = conn.execute(
+            """
+            select measured_rx_bytes, measured_tx_bytes, last_rx_counter,
+                   last_tx_counter, is_partial
+            from server_traffic_meter where server_id = ?
+            """,
+            (server_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert dict(meter) == {
+        "measured_rx_bytes": 700,
+        "measured_tx_bytes": 1_400,
+        "last_rx_counter": 100,
+        "last_tx_counter": 200,
+        "is_partial": 1,
+    }
 
 
 def test_deployment_monitors_custom_services_even_when_currently_stopped():

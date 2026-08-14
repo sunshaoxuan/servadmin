@@ -120,6 +120,34 @@ MIGRATIONS = [
         on server_subscription_usage(server_id, collected_at desc);
         """,
     ),
+    (
+        2,
+        "automatic monthly traffic meter",
+        """
+        create table if not exists server_traffic_meter (
+          id integer primary key autoincrement,
+          server_id integer not null references servers(id) on delete cascade,
+          period_start text not null,
+          period_end text not null,
+          base_used_bytes integer not null default 0 check(base_used_bytes >= 0),
+          quota_bytes integer check(quota_bytes > 0),
+          measured_rx_bytes integer not null default 0 check(measured_rx_bytes >= 0),
+          measured_tx_bytes integer not null default 0 check(measured_tx_bytes >= 0),
+          last_rx_counter integer,
+          last_tx_counter integer,
+          last_observed_at integer,
+          source_label text not null,
+          count_mode text not null default 'both' check(count_mode in ('both', 'outbound')),
+          baseline_collected_at text,
+          is_partial integer not null default 1,
+          initialized_at text not null default current_timestamp,
+          updated_at text not null default current_timestamp,
+          unique(server_id, period_start, period_end)
+        );
+        create index if not exists idx_traffic_meter_server_period
+        on server_traffic_meter(server_id, period_end desc);
+        """,
+    ),
 ]
 
 SERVER_MIGRATIONS = {

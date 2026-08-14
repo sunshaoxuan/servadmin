@@ -102,9 +102,9 @@
           <div class="metric-card wide">
             <span class="metric-icon metric-check"><i class="ti ti-calendar-check"></i></span>
             <div>
-              <span>月流量已接入</span>
+              <span>月流量自动计量</span>
               <strong id="metricLast">0 / 0</strong>
-              <small id="metricChecked">供应商套餐读数</small>
+              <small id="metricChecked">等待计量样本</small>
             </div>
           </div>
         </section>
@@ -414,6 +414,7 @@
           <label>已用流量 GB<input id="trafficUsedGb" type="number" min="0" step="0.001" required /></label>
           <label>套餐流量 GB<input id="trafficQuotaGb" type="number" min="0.001" step="0.001" required /></label>
           <label>数据来源<input id="trafficSourceLabel" placeholder="例如 Riven Cloud 控制台" required /></label>
+          <label>供应商计量方向<select id="trafficCountMode"><option value="both">接收 + 发送</option><option value="outbound">仅发送</option></select></label>
           <label>管理画面地址<input id="trafficSourceUrl" type="url" placeholder="https://provider.example/servers" /></label>
         </div>
         <div class="source-note"><i class="ti ti-shield-check"></i>仅保存管理画面显示的权威读数、周期和来源地址，不在此表单保存供应商密码。</div>

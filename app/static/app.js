@@ -105,9 +105,23 @@ function subscriptionHtml(server) {
         <button type="button" class="traffic-link" data-monitor-action="traffic" data-id="${server.id}">录入读数 <i class="ti ti-arrow-up-right"></i></button>
       </div>`;
   }
+  if (!item.quota_bytes) {
+    return `
+      <div class="traffic-heading">
+        <div><span>月度自动计量</span><strong>${formatBytes(item.used_bytes)}</strong></div>
+        <button type="button" class="icon-ghost" data-monitor-action="traffic" data-id="${server.id}" title="设置套餐限额"><i class="ti ti-settings"></i></button>
+      </div>
+      <div class="traffic-progress uncalibrated"><i style="width:100%"></i></div>
+      <div class="traffic-meta">
+        <span>接收 ${formatBytes(item.measured_rx_bytes)} · 发送 ${formatBytes(item.measured_tx_bytes)}</span>
+        <span>${escapeHtml(item.period_start)} 至 ${escapeHtml(item.period_end)}</span>
+      </div>
+      <small class="traffic-source">Agent 每分钟自动累计接收与发送 · 当前为接入后的部分周期 · <button type="button" class="inline-action" data-monitor-action="traffic" data-id="${server.id}">设置套餐限额</button></small>`;
+  }
   const usedPercent = Math.max(0, Number(item.used_percent || 0));
   const displayPercent = Math.min(100, usedPercent);
   const collected = formatDateTime(item.collected_at);
+  const meterUpdated = formatDateTime(item.meter_updated_at);
   const source = item.source_url
     ? `<a href="${escapeHtml(item.source_url)}" target="_blank" rel="noreferrer">${escapeHtml(item.source_label)}</a>`
     : escapeHtml(item.source_label);
@@ -121,7 +135,7 @@ function subscriptionHtml(server) {
       <span>${formatBytes(item.used_bytes)} / ${formatBytes(item.quota_bytes)}</span>
       <span>${escapeHtml(item.period_start)} 至 ${escapeHtml(item.period_end)}</span>
     </div>
-    <small class="traffic-source">来源 ${source} · 采集 ${escapeHtml(collected)}</small>`;
+    <small class="traffic-source">${item.automatic ? `供应商基线 + Agent 自动增量（${item.count_mode === "outbound" ? "仅发送" : "接收 + 发送"}）` : "供应商读数"} · 来源 ${source} · 校准 ${escapeHtml(collected)}${item.automatic ? ` · 更新 ${escapeHtml(meterUpdated)}` : ""}</small>`;
 }
 
 function monitorCardHtml(server) {
@@ -185,8 +199,8 @@ function renderDashboard() {
   $("metricOnline").textContent = summary.online || 0;
   $("metricUnknown").textContent = summary.attention || 0;
   $("metricOffline").textContent = `${summary.attention || 0} 台延迟、离线或待采样`;
-  $("metricLast").textContent = `${summary.subscription_ready || 0} / ${summary.total || 0}`;
-  $("metricChecked").textContent = "供应商套餐读数";
+  $("metricLast").textContent = `${summary.automatic_metering || 0} / ${summary.total || 0}`;
+  $("metricChecked").textContent = `${summary.subscription_ready || 0} 台已校准套餐限额`;
   $("tableCount").textContent = `${summary.total || 0} 台纳入监控`;
   $("monitorGrid").innerHTML = visibleServers.length
     ? visibleServers.map(monitorCardHtml).join("")
@@ -865,6 +879,7 @@ function openTrafficForm(serverId) {
   $("trafficUsedGb").value = item ? Number(item.used_bytes) / 1_000_000_000 : "";
   $("trafficQuotaGb").value = item ? Number(item.quota_bytes) / 1_000_000_000 : "";
   $("trafficSourceLabel").value = item?.source_label || `${server.provider} 管理画面`;
+  $("trafficCountMode").value = item?.count_mode || "both";
   $("trafficSourceUrl").value = item?.source_url || "";
   $("trafficDialog").showModal();
 }
@@ -1339,6 +1354,7 @@ $("trafficForm").addEventListener("submit", async (event) => {
       quota_gb: Number($("trafficQuotaGb").value),
       source_label: $("trafficSourceLabel").value.trim(),
       source_url: $("trafficSourceUrl").value.trim(),
+      count_mode: $("trafficCountMode").value,
     }),
   });
   state.dashboard = result.dashboard;

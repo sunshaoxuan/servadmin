@@ -247,6 +247,7 @@ def test_dashboard_combines_heartbeat_io_space_and_subscription_usage():
                 "quota_gb": 1024,
                 "source_label": "Riven Cloud 管理画面",
                 "source_url": "https://example.invalid/server/usage",
+                "count_mode": "outbound",
             },
         )
         assert saved.status_code == 200
@@ -254,13 +255,19 @@ def test_dashboard_combines_heartbeat_io_space_and_subscription_usage():
         assert subscription["used_bytes"] == 128_500_000_000
         assert subscription["quota_bytes"] == 1_024_000_000_000
         assert subscription["used_percent"] == 12.5
+        assert subscription["automatic"] is True
+        assert subscription["is_partial"] is False
+        assert subscription["count_mode"] == "outbound"
         assert saved.json()["dashboard"]["summary"]["subscription_ready"] == 1
+        assert saved.json()["dashboard"]["summary"]["automatic_metering"] == 1
 
         conn = connect(db_path)
         try:
             assert conn.execute("select count(*) from schema_migrations where version = 1").fetchone()[0] == 1
+            assert conn.execute("select count(*) from schema_migrations where version = 2").fetchone()[0] == 1
             init_db(conn)
             assert conn.execute("select count(*) from schema_migrations where version = 1").fetchone()[0] == 1
+            assert conn.execute("select count(*) from schema_migrations where version = 2").fetchone()[0] == 1
         finally:
             conn.close()
     finally:
