@@ -15,12 +15,13 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, List, Optional
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import AnyHttpUrl, BaseModel, Field
+from pydantic import AnyHttpUrl, BaseModel, Field, field_validator
 import paramiko
 
 from .db import connect, init_db, row_to_server
@@ -38,7 +39,7 @@ MESH_SECRET = os.environ.get("OPS_MESH_SECRET", "").strip()
 MESH_ENABLED = os.environ.get("OPS_MESH_ENABLED", "0") == "1" and len(MESH_SECRET) >= 32
 MESH_INTERVAL_SECONDS = max(60, int(os.environ.get("OPS_MESH_INTERVAL_SECONDS", str(DEFAULT_INTERVAL_SECONDS))))
 PROVIDER_SYNC_ENABLED = os.environ.get("OPS_PROVIDER_SYNC_ENABLED", "1") == "1"
-PROVIDER_SYNC_INTERVAL_SECONDS = max(900, int(os.environ.get("OPS_PROVIDER_SYNC_INTERVAL_SECONDS", "21600")))
+PROVIDER_SYNC_INTERVAL_SECONDS = max(900, int(os.environ.get("OPS_PROVIDER_SYNC_INTERVAL_SECONDS", "900")))
 SESSION_COOKIE = "ops_session"
 SYSTEMD_CHECKS = [
     {"id": "server-desk", "name": "Server Desk", "unit": "server-desk.service", "category": "system"},
@@ -101,6 +102,11 @@ class SubscriptionUsagePayload(BaseModel):
     source_url: Optional[AnyHttpUrl] = None
     next_reset_at: Optional[str] = None
     reset_timezone: Optional[str] = Field(default=None, max_length=64)
+
+    @field_validator("source_url", mode="before")
+    @classmethod
+    def normalize_empty_source_url(cls, value):
+        return None if isinstance(value, str) and not value.strip() else value
 
 
 def normalize_provider_reset(next_reset_at: Optional[str], reset_timezone: Optional[str]) -> tuple[str, str]:
@@ -176,6 +182,18 @@ def server_response(conn, row) -> dict[str, Any]:
     return server
 
 
+def infer_provider_connector(provider: str, portal_url: str, requested: str) -> str:
+    if requested not in ("", "browser"):
+        return requested
+    host = (urlparse(portal_url or "").hostname or "").lower()
+    provider_name = (provider or "").strip().lower()
+    if host == "portal.orangevps.com" or "orangevps" in provider_name:
+        return "orangevps"
+    if host == "portal.sa.net" or "riven cloud" in provider_name:
+        return "riven_cloud"
+    return requested or "browser"
+
+
 def save_provider_access(conn, server_id: int, payload: ServerPayload, c: CredentialCipher) -> None:
     existing = conn.execute(
         "select * from server_provider_access where server_id = ?",
@@ -197,14 +215,33 @@ def save_provider_access(conn, server_id: int, payload: ServerPayload, c: Creden
     password_encrypted = old.get("password_encrypted", "")
     if payload.provider_password:
         password_encrypted = c.encrypt(payload.provider_password)
+    requested_connector = payload.provider_connector if payload.provider_connector is not None else old.get("connector_type", "browser")
+    connector_type = infer_provider_connector(
+        payload.provider or "",
+        payload.provider_portal_url if payload.provider_portal_url is not None else old.get("portal_url", ""),
+        requested_connector or "browser",
+    )
     values = {
         "portal_url": payload.provider_portal_url if payload.provider_portal_url is not None else old.get("portal_url", ""),
         "login_username": payload.provider_username if payload.provider_username is not None else old.get("login_username", ""),
         "service_reference": payload.provider_service_id if payload.provider_service_id is not None else old.get("service_reference", ""),
         "external_server_id": payload.provider_server_id if payload.provider_server_id is not None else old.get("external_server_id", ""),
-        "connector_type": payload.provider_connector if payload.provider_connector is not None else old.get("connector_type", "browser"),
-        "sync_enabled": payload.provider_sync_enabled if payload.provider_sync_enabled is not None else bool(old.get("sync_enabled", 1)),
+        "connector_type": connector_type,
     }
+    requested_sync = (
+        payload.provider_sync_enabled
+        if payload.provider_sync_enabled is not None
+        else bool(old.get("sync_enabled", 1))
+    )
+    supported_connector = connector_type in {"riven_cloud", "orangevps"}
+    authentication_complete = all(
+        (values["login_username"], password_encrypted, values["service_reference"], values["external_server_id"])
+    )
+    values["sync_enabled"] = (
+        authentication_complete and (connector_type != requested_connector or requested_sync)
+        if supported_connector
+        else requested_sync
+    )
     conn.execute(
         """
         insert into server_provider_access(
@@ -1458,7 +1495,6 @@ async def mesh_monitor_loop() -> None:
 
 
 async def provider_sync_loop() -> None:
-    await asyncio.sleep(30)
     while True:
         try:
             await asyncio.to_thread(sync_all_provider_usage, DB_PATH, CREDENTIAL_KEY)

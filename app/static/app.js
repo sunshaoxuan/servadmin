@@ -868,6 +868,20 @@ function openForm(server = null) {
   $("serverDialog").showModal();
 }
 
+function applyProviderSyncRecommendation() {
+  const connector = $("provider_connector");
+  const provider = $("provider").value.trim().toLowerCase();
+  let host = "";
+  try {
+    host = new URL($("provider_portal_url").value.trim()).hostname.toLowerCase();
+  } catch {
+    // Keep the current selection until the address is complete.
+  }
+  if (host === "portal.orangevps.com" || provider.includes("orangevps")) connector.value = "orangevps";
+  if (host === "portal.sa.net" || provider.includes("riven cloud")) connector.value = "riven_cloud";
+  if (["riven_cloud", "orangevps"].includes(connector.value)) $("provider_sync_enabled").checked = true;
+}
+
 function openTrafficForm(serverId) {
   const server = (state.dashboard?.servers || []).find((item) => item.id === serverId);
   if (!server) return;
@@ -1400,6 +1414,9 @@ $("refreshBtn").addEventListener("click", () => {
 });
 $("addBtn").addEventListener("click", () => openForm());
 $("editBtn").addEventListener("click", () => openForm(selected()));
+$("provider").addEventListener("input", applyProviderSyncRecommendation);
+$("provider_portal_url").addEventListener("input", applyProviderSyncRecommendation);
+$("provider_connector").addEventListener("change", applyProviderSyncRecommendation);
 $("searchBox").addEventListener("input", render);
 $("showRetiredToggle").addEventListener("change", render);
 $("detailTabs").addEventListener("click", (event) => {
@@ -1441,7 +1458,7 @@ $("trafficForm").addEventListener("submit", async (event) => {
       used_gb: Number($("trafficUsedGb").value),
       quota_gb: Number($("trafficQuotaGb").value),
       source_label: $("trafficSourceLabel").value.trim(),
-      source_url: $("trafficSourceUrl").value.trim(),
+      source_url: $("trafficSourceUrl").value.trim() || null,
       next_reset_at: $("trafficNextResetAt").value,
       reset_timezone: $("trafficResetTimezone").value.trim(),
     }),

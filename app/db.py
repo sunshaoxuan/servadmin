@@ -184,6 +184,37 @@ MIGRATIONS = [
         alter table server_subscription_usage add column reset_timezone text;
         """,
     ),
+    (
+        6,
+        "enable configured provider sync",
+        """
+        update server_provider_access
+        set connector_type = case
+              when lower(coalesce(portal_url, '')) = 'https://portal.orangevps.com'
+                or lower(coalesce(portal_url, '')) like 'https://portal.orangevps.com/%' then 'orangevps'
+              when lower(coalesce(portal_url, '')) = 'https://portal.sa.net'
+                or lower(coalesce(portal_url, '')) like 'https://portal.sa.net/%' then 'riven_cloud'
+              else connector_type
+            end,
+            updated_at = current_timestamp
+        where connector_type in ('', 'browser')
+          and (
+            lower(coalesce(portal_url, '')) = 'https://portal.orangevps.com'
+            or lower(coalesce(portal_url, '')) like 'https://portal.orangevps.com/%'
+            or lower(coalesce(portal_url, '')) = 'https://portal.sa.net'
+            or lower(coalesce(portal_url, '')) like 'https://portal.sa.net/%'
+          );
+
+        update server_provider_access
+        set sync_enabled = 1,
+            updated_at = current_timestamp
+        where connector_type in ('riven_cloud', 'orangevps')
+          and coalesce(login_username, '') != ''
+          and coalesce(password_encrypted, '') != ''
+          and coalesce(service_reference, '') != ''
+          and coalesce(external_server_id, '') != '';
+        """,
+    ),
 ]
 
 SERVER_MIGRATIONS = {

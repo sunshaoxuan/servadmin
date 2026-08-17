@@ -435,8 +435,8 @@
         <div class="form-grid">
           <label>计费周期开始<input id="trafficPeriodStart" type="date" required /></label>
           <label>计费周期结束<input id="trafficPeriodEnd" type="date" required /></label>
-          <label>已用流量 GB<input id="trafficUsedGb" type="number" min="0" step="0.001" required /></label>
-          <label>套餐流量 GB<input id="trafficQuotaGb" type="number" min="0.001" step="0.001" required /></label>
+          <label>已用流量 GB<input id="trafficUsedGb" type="number" min="0" step="any" required /></label>
+          <label>套餐流量 GB<input id="trafficQuotaGb" type="number" min="0.000000001" step="any" required /></label>
           <label>数据来源<input id="trafficSourceLabel" placeholder="例如 Riven Cloud 控制台" required /></label>
           <label>管理画面地址<input id="trafficSourceUrl" type="url" placeholder="https://provider.example/servers" /></label>
           <label>供应商下次重置时间<input id="trafficNextResetAt" type="datetime-local" step="1" /></label>
@@ -451,6 +451,6 @@
       </form>
     </dialog>
 
-    <script src="static/app.js?v=20260814-provider-orange1"></script>
+    <script src="static/app.js?v=20260817-provider-auto2"></script>
   </body>
 </html>

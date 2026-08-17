@@ -1,4 +1,5 @@
 import os
+import asyncio
 import json
 import socket
 import tempfile
@@ -46,7 +47,47 @@ def test_version_3_clears_existing_agent_billing_meter_for_safe_rollback(tmp_pat
         assert conn.execute("select count(*) from schema_migrations where version = 3").fetchone()[0] == 1
         assert conn.execute("select count(*) from schema_migrations where version = 4").fetchone()[0] == 1
         assert conn.execute("select count(*) from schema_migrations where version = 5").fetchone()[0] == 1
+        assert conn.execute("select count(*) from schema_migrations where version = 6").fetchone()[0] == 1
         assert conn.execute("select count(*) from server_traffic_meter").fetchone()[0] == 0
+    finally:
+        conn.close()
+
+
+def test_version_6_enables_complete_provider_authentication(tmp_path):
+    conn = connect(tmp_path / "migration-v5.sqlite3")
+    try:
+        init_db(conn)
+        conn.execute(
+            """
+            insert into servers(name, hostname, provider, login_user)
+            values ('orange', 'host.orangevps', 'OrangeVPS', 'root')
+            """
+        )
+        server_id = conn.execute("select id from servers").fetchone()[0]
+        conn.execute(
+            """
+            insert into server_provider_access(
+              server_id, portal_url, login_username, password_encrypted,
+              service_reference, external_server_id, connector_type, sync_enabled
+            ) values (?, 'https://portal.orangevps.com/clientarea.php', 'operator',
+                      'encrypted', '10807', 'host.orangevps', 'browser', 0)
+            """,
+            (server_id,),
+        )
+        conn.execute("delete from schema_migrations where version = 6")
+        conn.commit()
+
+        init_db(conn)
+
+        access = conn.execute(
+            "select connector_type, sync_enabled from server_provider_access where server_id = ?",
+            (server_id,),
+        ).fetchone()
+        assert access["connector_type"] == "orangevps"
+        assert access["sync_enabled"] == 1
+        assert conn.execute("select count(*) from schema_migrations where version = 6").fetchone()[0] == 1
+        init_db(conn)
+        assert conn.execute("select count(*) from schema_migrations where version = 6").fetchone()[0] == 1
     finally:
         conn.close()
 
@@ -57,6 +98,57 @@ def test_git_sync_waits_for_application_health():
     assert "for _attempt in $(seq 1 30)" in script
     assert "health endpoint did not become ready within 30 seconds" in script
     assert "sleep 2" not in script
+
+
+def test_provider_sync_loop_runs_before_waiting(monkeypatch):
+    from app import main
+
+    calls = []
+
+    async def fake_to_thread(function, *args):
+        calls.append((function, args))
+        return []
+
+    async def stop_after_first_cycle(seconds):
+        assert seconds == main.PROVIDER_SYNC_INTERVAL_SECONDS
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(main.asyncio, "to_thread", fake_to_thread)
+    monkeypatch.setattr(main.asyncio, "sleep", stop_after_first_cycle)
+
+    try:
+        asyncio.run(main.provider_sync_loop())
+    except asyncio.CancelledError:
+        pass
+
+    assert calls == [(main.sync_all_provider_usage, (main.DB_PATH, main.CREDENTIAL_KEY))]
+
+
+def test_orange_provider_authentication_selects_and_enables_sync():
+    client, db_path = make_client()
+    try:
+        assert client.post("/api/login", json={"username": "admin", "password": "admin-pass"}).status_code == 200
+        response = client.post(
+            "/api/servers",
+            json={
+                "name": "Orange VPS",
+                "hostname": "host1782378673.orangevps",
+                "provider": "OrangeVPS",
+                "login_user": "root",
+                "provider_portal_url": "https://portal.orangevps.com/clientarea.php?action=productdetails&id=10807",
+                "provider_username": "operator@example.com",
+                "provider_password": "provider-secret",
+                "provider_service_id": "10807",
+                "provider_server_id": "host1782378673.orangevps",
+                "provider_connector": "browser",
+                "provider_sync_enabled": False,
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["provider_connector"] == "orangevps"
+        assert response.json()["provider_sync_enabled"] is True
+    finally:
+        os.unlink(db_path)
 
 
 def test_login_create_reveal_and_audit():
@@ -310,6 +402,22 @@ def test_dashboard_combines_heartbeat_io_space_and_subscription_usage():
         assert subscription["reset_timezone"] == "America/Toronto"
         assert saved.json()["dashboard"]["summary"]["subscription_ready"] == 1
 
+        precise_saved = client.put(
+            f"/api/servers/{created['id']}/subscription-usage",
+            json={
+                "period_start": "2026-08-01",
+                "period_end": "2026-08-31",
+                "used_gb": 29.260123456,
+                "quota_gb": 8589.934592,
+                "source_label": "OrangeVPS 管理画面",
+                "source_url": "",
+            },
+        )
+        assert precise_saved.status_code == 200
+        precise_subscription = precise_saved.json()["dashboard"]["servers"][0]["subscription"]
+        assert precise_subscription["used_bytes"] == 29_260_123_456
+        assert precise_subscription["quota_bytes"] == 8_589_934_592_000
+
         invalid_reset = client.put(
             f"/api/servers/{created['id']}/subscription-usage",
             json={
@@ -330,6 +438,7 @@ def test_dashboard_combines_heartbeat_io_space_and_subscription_usage():
             assert conn.execute("select count(*) from schema_migrations where version = 3").fetchone()[0] == 1
             assert conn.execute("select count(*) from schema_migrations where version = 4").fetchone()[0] == 1
             assert conn.execute("select count(*) from schema_migrations where version = 5").fetchone()[0] == 1
+            assert conn.execute("select count(*) from schema_migrations where version = 6").fetchone()[0] == 1
             assert conn.execute("select count(*) from server_traffic_meter").fetchone()[0] == 0
             init_db(conn)
             assert conn.execute("select count(*) from schema_migrations where version = 1").fetchone()[0] == 1
@@ -337,6 +446,7 @@ def test_dashboard_combines_heartbeat_io_space_and_subscription_usage():
             assert conn.execute("select count(*) from schema_migrations where version = 3").fetchone()[0] == 1
             assert conn.execute("select count(*) from schema_migrations where version = 4").fetchone()[0] == 1
             assert conn.execute("select count(*) from schema_migrations where version = 5").fetchone()[0] == 1
+            assert conn.execute("select count(*) from schema_migrations where version = 6").fetchone()[0] == 1
         finally:
             conn.close()
     finally:
@@ -401,7 +511,9 @@ def test_static_and_index_are_not_cached():
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
         assert "static/styles.css?v=20260814-dashboard1" in response.text
-        assert "static/app.js?v=20260814-provider-orange1" in response.text
+        assert "static/app.js?v=20260817-provider-auto2" in response.text
+        assert 'id="trafficUsedGb" type="number" min="0" step="any"' in response.text
+        assert 'id="trafficQuotaGb" type="number" min="0.000000001" step="any"' in response.text
         assert 'id="trafficNextResetAt"' in response.text
         assert 'id="trafficResetTimezone"' in response.text
         assert 'id="detailCredential"' in response.text
