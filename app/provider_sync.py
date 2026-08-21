@@ -122,8 +122,6 @@ def _validate_orange_access(access: sqlite3.Row, password: str) -> None:
         raise ProviderSyncError("provider password is not configured")
     if not re.fullmatch(r"\d+", access["service_reference"] or ""):
         raise ProviderSyncError("OrangeVPS service id is invalid")
-    if not re.fullmatch(r"[A-Za-z0-9.-]{3,255}", access["external_server_id"] or ""):
-        raise ProviderSyncError("OrangeVPS server id is invalid")
     portal_host = urlparse(access["portal_url"] or ORANGE_PORTAL_ORIGIN).hostname
     if portal_host != "portal.orangevps.com":
         raise ProviderSyncError("OrangeVPS portal host is invalid")

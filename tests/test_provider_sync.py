@@ -52,7 +52,7 @@ def seeded_orange_provider(conn: sqlite3.Connection) -> int:
           server_id, portal_url, login_username, password_encrypted,
           service_reference, external_server_id, connector_type, sync_enabled
         ) values (?, 'https://portal.orangevps.com/clientarea.php', 'orange@example.com', ?,
-                  '10807', 'host1782378673.orangevps', 'orangevps', 1)
+                  '10807', '', 'orangevps', 1)
         """,
         (server_id, CredentialCipher(KEY).encrypt("orange-secret")),
     )

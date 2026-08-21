@@ -215,6 +215,19 @@ MIGRATIONS = [
           and coalesce(external_server_id, '') != '';
         """,
     ),
+    (
+        7,
+        "enable OrangeVPS sync without server identifier",
+        """
+        update server_provider_access
+        set sync_enabled = 1,
+            updated_at = current_timestamp
+        where connector_type = 'orangevps'
+          and coalesce(login_username, '') != ''
+          and coalesce(password_encrypted, '') != ''
+          and coalesce(service_reference, '') != '';
+        """,
+    ),
 ]
 
 SERVER_MIGRATIONS = {

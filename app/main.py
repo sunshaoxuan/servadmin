@@ -234,8 +234,8 @@ def save_provider_access(conn, server_id: int, payload: ServerPayload, c: Creden
         else bool(old.get("sync_enabled", 1))
     )
     supported_connector = connector_type in {"riven_cloud", "orangevps"}
-    authentication_complete = all(
-        (values["login_username"], password_encrypted, values["service_reference"], values["external_server_id"])
+    authentication_complete = all((values["login_username"], password_encrypted, values["service_reference"])) and (
+        connector_type != "riven_cloud" or bool(values["external_server_id"])
     )
     values["sync_enabled"] = (
         authentication_complete and (connector_type != requested_connector or requested_sync)

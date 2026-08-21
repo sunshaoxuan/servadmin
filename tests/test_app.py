@@ -48,6 +48,7 @@ def test_version_3_clears_existing_agent_billing_meter_for_safe_rollback(tmp_pat
         assert conn.execute("select count(*) from schema_migrations where version = 4").fetchone()[0] == 1
         assert conn.execute("select count(*) from schema_migrations where version = 5").fetchone()[0] == 1
         assert conn.execute("select count(*) from schema_migrations where version = 6").fetchone()[0] == 1
+        assert conn.execute("select count(*) from schema_migrations where version = 7").fetchone()[0] == 1
         assert conn.execute("select count(*) from server_traffic_meter").fetchone()[0] == 0
     finally:
         conn.close()
@@ -88,6 +89,43 @@ def test_version_6_enables_complete_provider_authentication(tmp_path):
         assert conn.execute("select count(*) from schema_migrations where version = 6").fetchone()[0] == 1
         init_db(conn)
         assert conn.execute("select count(*) from schema_migrations where version = 6").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
+def test_version_7_enables_orange_without_server_identifier(tmp_path):
+    conn = connect(tmp_path / "migration-v6.sqlite3")
+    try:
+        init_db(conn)
+        conn.execute(
+            """
+            insert into servers(name, hostname, provider, login_user)
+            values ('orange', 'host.orangevps', 'OrangeVPS', 'root')
+            """
+        )
+        server_id = conn.execute("select id from servers").fetchone()[0]
+        conn.execute(
+            """
+            insert into server_provider_access(
+              server_id, portal_url, login_username, password_encrypted,
+              service_reference, external_server_id, connector_type, sync_enabled
+            ) values (?, 'https://portal.orangevps.com/clientarea.php', 'operator',
+                      'encrypted', '10807', '', 'orangevps', 0)
+            """,
+            (server_id,),
+        )
+        conn.execute("delete from schema_migrations where version = 7")
+        conn.commit()
+
+        init_db(conn)
+
+        access = conn.execute(
+            "select sync_enabled from server_provider_access where server_id = ?", (server_id,)
+        ).fetchone()
+        assert access["sync_enabled"] == 1
+        assert conn.execute("select count(*) from schema_migrations where version = 7").fetchone()[0] == 1
+        init_db(conn)
+        assert conn.execute("select count(*) from schema_migrations where version = 7").fetchone()[0] == 1
     finally:
         conn.close()
 
@@ -139,7 +177,6 @@ def test_orange_provider_authentication_selects_and_enables_sync():
                 "provider_username": "operator@example.com",
                 "provider_password": "provider-secret",
                 "provider_service_id": "10807",
-                "provider_server_id": "host1782378673.orangevps",
                 "provider_connector": "browser",
                 "provider_sync_enabled": False,
             },
