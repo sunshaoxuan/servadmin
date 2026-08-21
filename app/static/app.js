@@ -115,12 +115,32 @@ function providerResetHtml(item) {
   return `重置 ${escapeHtml(formatIn("Asia/Tokyo"))} JST<br><small>供应商 ${escapeHtml(formatIn(item.reset_timezone))} ${escapeHtml(item.reset_timezone)}</small>`;
 }
 
+function providerSyncHtml(sync) {
+  const state = sync || { status: "unconfigured" };
+  const age = Number(state.age_seconds);
+  const ageLabel = Number.isFinite(age)
+    ? (age < 60 ? "刚刚" : `${Math.floor(age / 60)} 分钟前`)
+    : "尚无成功记录";
+  const labels = {
+    fresh: `自动同步正常，15 分钟内已成功读取，${ageLabel}`,
+    stale: `自动同步超过 15 分钟未成功读取，上次成功 ${ageLabel}`,
+    failed: `自动同步失败，上次成功 ${ageLabel}`,
+    pending: "自动同步等待首次成功读取",
+    disabled: "自动同步已关闭",
+    manual: "当前为人工读数，未启用自动同步",
+    unconfigured: "尚未配置供应商自动同步",
+  };
+  const tone = ["fresh", "stale", "failed"].includes(state.status) ? state.status : "neutral";
+  return `<small class="traffic-sync ${tone}"><i class="ti ti-refresh"></i>${escapeHtml(labels[state.status] || labels.unconfigured)}</small>`;
+}
+
 function subscriptionHtml(server) {
   const item = server.subscription;
+  const sync = providerSyncHtml(server.provider_sync);
   if (!item) {
     return `
       <div class="traffic-empty">
-        <div><strong>供应商账单流量</strong><small>等待管理画面或官方 API 读数</small></div>
+        <div><strong>供应商账单流量</strong><small>等待管理画面或官方 API 读数</small>${sync}</div>
         <button type="button" class="traffic-link" data-monitor-action="traffic" data-id="${server.id}">录入后台读数 <i class="ti ti-arrow-up-right"></i></button>
       </div>`;
   }
@@ -140,7 +160,8 @@ function subscriptionHtml(server) {
       <span>${formatBytes(item.used_bytes)} / ${formatBytes(item.quota_bytes)}</span>
       <span>${providerResetHtml(item)}</span>
     </div>
-    <small class="traffic-source">供应商管理画面读数 · 来源 ${source} · 采集 ${escapeHtml(collected)}</small>`;
+    ${sync}
+    <small class="traffic-source">供应商读数 · 来源 ${source} · 采集 ${escapeHtml(collected)}</small>`;
 }
 
 function monitorCardHtml(server) {

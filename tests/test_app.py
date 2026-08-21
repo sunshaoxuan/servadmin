@@ -378,6 +378,7 @@ def test_dashboard_combines_heartbeat_io_space_and_subscription_usage():
         assert node["telemetry"]["disk_read_bytes_per_second"] == 3000.0
         assert node["telemetry"]["disk_write_bytes_per_second"] == 4000.0
         assert node["subscription"] is None
+        assert node["provider_sync"]["status"] == "unconfigured"
 
         saved = client.put(
             f"/api/servers/{created['id']}/subscription-usage",
@@ -453,6 +454,81 @@ def test_dashboard_combines_heartbeat_io_space_and_subscription_usage():
         os.unlink(db_path)
 
 
+def test_dashboard_reports_provider_sync_freshness():
+    client, db_path = make_client()
+    try:
+        assert client.post("/api/login", json={"username": "admin", "password": "admin-pass"}).status_code == 200
+        created = client.post(
+            "/api/servers",
+            json={
+                "name": "Provider Sync Node",
+                "hostname": "provider-sync.local",
+                "provider": "OrangeVPS",
+                "login_user": "root",
+                "provider_portal_url": "https://portal.orangevps.com/clientarea.php",
+                "provider_username": "operator",
+                "provider_password": "provider-secret",
+                "provider_service_id": "10807",
+                "provider_server_id": "provider-sync.local",
+            },
+        ).json()
+        conn = connect(db_path)
+        try:
+            init_db(conn)
+            conn.execute(
+                """
+                update server_provider_access
+                set last_sync_status = 'ok', last_synced_at = current_timestamp
+                where server_id = ?
+                """,
+                (created["id"],),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        fresh = client.get("/api/dashboard").json()["servers"][0]["provider_sync"]
+        assert fresh["status"] == "fresh"
+        assert fresh["fresh"] is True
+        assert fresh["age_seconds"] is not None
+        assert fresh["age_seconds"] <= 1
+
+        conn = connect(db_path)
+        try:
+            init_db(conn)
+            conn.execute(
+                """
+                update server_provider_access
+                set last_sync_status = 'ok', last_synced_at = datetime('now', '-16 minutes')
+                where server_id = ?
+                """,
+                (created["id"],),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        stale = client.get("/api/dashboard").json()["servers"][0]["provider_sync"]
+        assert stale["status"] == "stale"
+        assert stale["fresh"] is False
+        assert stale["age_seconds"] >= 960
+
+        conn = connect(db_path)
+        try:
+            init_db(conn)
+            conn.execute(
+                "update server_provider_access set last_sync_status = 'failed' where server_id = ?",
+                (created["id"],),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        failed = client.get("/api/dashboard").json()["servers"][0]["provider_sync"]
+        assert failed["status"] == "failed"
+        assert failed["fresh"] is False
+    finally:
+        os.unlink(db_path)
+
+
 def test_check_uses_configured_ssh_port(monkeypatch):
     client, db_path = make_client()
     calls = []
@@ -510,11 +586,12 @@ def test_static_and_index_are_not_cached():
         response = client.get("/")
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
-        assert "static/styles.css?v=20260814-dashboard1" in response.text
-        assert "static/app.js?v=20260817-provider-auto2" in response.text
+        assert "static/styles.css?v=20260821-provider-freshness2" in response.text
+        assert "static/app.js?v=20260821-provider-freshness1" in response.text
         assert 'id="trafficUsedGb" type="number" min="0" step="any"' in response.text
         assert 'id="trafficQuotaGb" type="number" min="0.000000001" step="any"' in response.text
         assert 'id="trafficNextResetAt"' in response.text
+        assert "15 分钟内已成功读取" in (Path(__file__).parents[1] / "app/static/app.js").read_text(encoding="utf-8")
         assert 'id="trafficResetTimezone"' in response.text
         assert 'id="detailCredential"' in response.text
         assert 'id="settingsView"' in response.text

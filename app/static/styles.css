@@ -1661,6 +1661,10 @@ dialog::backdrop { background: rgba(10, 20, 18, 0.34); }
 .traffic-progress { background: #f0f1f2; border-radius: 999px; height: 8px; margin: 10px 0 7px; overflow: hidden; }
 .traffic-progress i { background: linear-gradient(90deg, var(--accent), #ff935e); border-radius: inherit; display: block; height: 100%; }
 .traffic-meta { color: #7d8186; display: flex; font-size: 9px; justify-content: space-between; }
+.traffic-sync { align-items: center; border-radius: 999px; color: #5e656c; display: inline-flex; font-size: 10px; font-weight: 650; gap: 4px; line-height: 1.3; margin-top: 7px; padding: 4px 7px; }
+.traffic-sync.fresh { background: #e8f7ef; color: #14764c; }
+.traffic-sync.stale { background: #fff4df; color: #9a6100; }
+.traffic-sync.failed { background: #fff0f0; color: #b93737; }
 .traffic-source { color: #a0a3a8; display: block; font-size: 9px; margin-top: 5px; }
 .traffic-source a { color: var(--accent); }
 .traffic-empty small { color: #a0a3a8; display: block; font-size: 9px; margin-top: 3px; }

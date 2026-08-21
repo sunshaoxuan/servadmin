@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from .mesh import HEARTBEAT_FRESH_SECONDS, HEARTBEAT_OFFLINE_SECONDS
+
+
+PROVIDER_SYNC_FRESH_SECONDS = 15 * 60
 
 
 def _number(value: Any) -> float | None:
@@ -93,6 +97,63 @@ def _traffic_usage(conn, server_id: int) -> dict[str, Any] | None:
     return provider
 
 
+def _sync_timestamp(value: Any) -> int | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return int(parsed.timestamp())
+
+
+def _provider_sync_state(conn, server_id: int, generated_at: int) -> dict[str, Any]:
+    row = conn.execute(
+        """
+        select connector_type, sync_enabled, last_sync_status, last_synced_at
+        from server_provider_access
+        where server_id = ?
+        """,
+        (server_id,),
+    ).fetchone()
+    if not row:
+        return {
+            "status": "unconfigured",
+            "enabled": False,
+            "fresh": False,
+            "last_synced_at": None,
+            "age_seconds": None,
+        }
+
+    access = dict(row)
+    enabled = bool(access["sync_enabled"]) and access["connector_type"] in {"orangevps", "riven_cloud"}
+    last_synced_at = access["last_synced_at"]
+    synced_at = _sync_timestamp(last_synced_at)
+    age_seconds = max(0, generated_at - synced_at) if synced_at is not None else None
+    last_status = access["last_sync_status"] or "pending"
+    fresh = enabled and last_status == "ok" and age_seconds is not None and age_seconds <= PROVIDER_SYNC_FRESH_SECONDS
+
+    if not enabled:
+        status = "manual" if access["connector_type"] == "browser" else "disabled"
+    elif last_status == "failed":
+        status = "failed"
+    elif fresh:
+        status = "fresh"
+    elif last_status == "ok":
+        status = "stale"
+    else:
+        status = "pending"
+    return {
+        "status": status,
+        "enabled": enabled,
+        "fresh": fresh,
+        "last_synced_at": last_synced_at,
+        "age_seconds": age_seconds,
+    }
+
+
 def _server_card(conn, server: dict[str, Any], generated_at: int) -> dict[str, Any]:
     samples = _latest_samples(conn, int(server["id"]))
     previous = samples[-2] if len(samples) > 1 else None
@@ -148,6 +209,7 @@ def _server_card(conn, server: dict[str, Any], generated_at: int) -> dict[str, A
         "state_detail": state_detail,
         "telemetry": telemetry,
         "subscription": _traffic_usage(conn, int(server["id"])),
+        "provider_sync": _provider_sync_state(conn, int(server["id"]), generated_at),
     }
 
 
