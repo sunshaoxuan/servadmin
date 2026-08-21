@@ -5,6 +5,7 @@ from decimal import Decimal
 
 import httpx
 
+from app import provider_sync
 from app.db import connect, init_db
 from app.provider_sync import ProviderSyncError, sync_provider_usage
 from app.security import CredentialCipher
@@ -200,3 +201,30 @@ def test_unsupported_provider_connector_is_rejected(tmp_path):
         raise AssertionError("unsupported connector should fail")
     finally:
         conn.close()
+
+
+def test_sync_all_provider_usage_runs_every_enabled_supported_server(tmp_path, monkeypatch):
+    db_path = tmp_path / "all-provider-sync.sqlite3"
+    conn = connect(db_path)
+    init_db(conn)
+    riven_id = seeded_provider(conn)
+    orange_id = seeded_orange_provider(conn)
+    disabled_id = seeded_provider(conn)
+    conn.execute("update server_provider_access set sync_enabled = 0 where server_id = ?", (disabled_id,))
+    conn.commit()
+    conn.close()
+
+    synced_ids = []
+
+    def fake_sync(_conn, _cipher, server_id):
+        synced_ids.append(server_id)
+        return {"used_bytes": server_id}
+
+    monkeypatch.setattr(provider_sync, "sync_provider_usage", fake_sync)
+    results = provider_sync.sync_all_provider_usage(db_path, KEY)
+
+    assert synced_ids == [riven_id, orange_id]
+    assert results == [
+        {"server_id": riven_id, "status": "ok", "used_bytes": riven_id},
+        {"server_id": orange_id, "status": "ok", "used_bytes": orange_id},
+    ]
