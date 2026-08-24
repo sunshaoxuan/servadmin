@@ -8,3 +8,5 @@
 | 自动任务原先存在 | `app/main.py` 的 `provider_sync_loop` 与 lifespan 任务创建 | 高 | 生产环境变量仍需发布后核验 |
 | 已认证档案会自动启用 | `app/db.py` 版本 6 migration 与 `infer_provider_connector` | 高 | 只覆盖 OrangeVPS 与 Riven Cloud |
 | 启动立即同步且默认每 15 分钟运行 | `app/main.py` 的默认间隔和无启动等待循环，单元测试验证首次循环先调用同步 | 高 | 外部网络失败会记录单机失败状态 |
+| 完整凭据的过期缺失状态会被清除 | `app/db.py` 版本 8 migration 与 `tests/test_app.py::test_version_8_resets_stale_credential_status_for_complete_provider_access` | 高 | 仅作用于已启用的 OrangeVPS 与 Riven Cloud 档案 |
+| Prd2 已完成真实自动同步 | `docs/assets/provider-sync-status-reset-production-20260824.png` 与生产页面的 OrangeVPS 自动同步来源 | 高 | 读数为采集时刻的供应商返回值 |

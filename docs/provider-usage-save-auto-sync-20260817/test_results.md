@@ -21,6 +21,13 @@
 5. 新页面控制台没有 error 或 warning。
 6. 输入 OrangeVPS 名称和后台域名后，连接器为 `orangevps` 且自动同步为开启状态。
 
+## 2026-08-24 生产状态修正
+
+1. `python -m pytest -q --basetemp .task/pytest`：64 passed。
+2. 生产 migration 8 已应用，Prd2 从“等待首次同步”进入“15 分钟内已成功读取”。
+3. 生产首页显示 OrangeVPS 自动同步来源 `91.62 GiB / 8000 GiB`，换算显示为 `98.4 GB / 8.6 TB`。
+4. 生产页面控制台 error 与 warning 均为 0。
+
 ## 未执行项目
 
 未使用真实供应商账号访问外部站点。已有连接器 mock 测试覆盖登录流程、数据解析和数据库持久化。
