@@ -102,7 +102,7 @@ Riven Cloud 连接器使用客户区登录、VirtFusion 单点登录和供应商
 
 OrangeVPS 连接器登录客户区并读取 SolusVM2 服务详情中的 `Total traffic`。供应商以 GiB 展示用量与限额，连接器按二进制单位换算为准确字节数，来源标签保留供应商原始 GiB 数值。OrangeVPS 服务条款规定流量在每个自然月开始时重置，且只有出站流量计入配额，因此连接器按自然月保存独立账期。
 
-数据库迁移由 `schema_migrations` 记录。版本 1 创建供应商读数表。版本 2 曾创建 Agent 套餐账本，版本 3 根据数据边界纠正清空错误口径数据。版本 4 创建供应商后台加密档案。版本 5 增加供应商精确重置时刻和 IANA 时区。版本 6 为认证资料完整的 OrangeVPS 与 Riven Cloud 档案识别连接器并启用自动同步。版本 7 移除 OrangeVPS 对外部服务器标识的无关依赖。运行代码不再读写 Agent 套餐账本。该表结构在本次发布观察期内保留，用于上一版本的短期回滚安全，稳定后由独立迁移删除。迁移均可重复检查。发布回滚前应先备份 SQLite 数据库。
+数据库迁移由 `schema_migrations` 记录。版本 1 创建供应商读数表。版本 2 曾创建 Agent 套餐账本，版本 3 根据数据边界纠正清空错误口径数据。版本 4 创建供应商后台加密档案。版本 5 增加供应商精确重置时刻和 IANA 时区。版本 6 为认证资料完整的 OrangeVPS 与 Riven Cloud 档案识别连接器并启用自动同步。版本 7 移除 OrangeVPS 对外部服务器标识的无关依赖。版本 8 会将已启用且认证完整、仍残留凭据缺失状态的档案重置为等待首次同步。运行代码不再读写 Agent 套餐账本。该表结构在本次发布观察期内保留，用于上一版本的短期回滚安全，稳定后由独立迁移删除。迁移均可重复检查。发布回滚前应先备份 SQLite 数据库。
 
 当前部署路径为 `https://ccnode.briconbric.com/server-desk/`。Nginx 使用 `/etc/letsencrypt/live/briconbric.com/fullchain.pem` 和 `/etc/letsencrypt/live/briconbric.com/privkey.pem` 的通用证书。
 

@@ -228,6 +228,34 @@ MIGRATIONS = [
           and coalesce(service_reference, '') != '';
         """,
     ),
+    (
+        8,
+        "reset configured provider sync status",
+        """
+        update server_provider_access
+        set last_sync_status = 'pending',
+            last_sync_message = null,
+            last_synced_at = null,
+            updated_at = current_timestamp
+        where sync_enabled = 1
+          and last_sync_status = 'credential_required'
+          and (
+            (
+              connector_type = 'orangevps'
+              and coalesce(login_username, '') != ''
+              and coalesce(password_encrypted, '') != ''
+              and coalesce(service_reference, '') != ''
+            )
+            or (
+              connector_type = 'riven_cloud'
+              and coalesce(login_username, '') != ''
+              and coalesce(password_encrypted, '') != ''
+              and coalesce(service_reference, '') != ''
+              and coalesce(external_server_id, '') != ''
+            )
+          );
+        """,
+    ),
 ]
 
 SERVER_MIGRATIONS = {
