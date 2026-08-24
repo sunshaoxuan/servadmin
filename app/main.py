@@ -40,6 +40,7 @@ MESH_ENABLED = os.environ.get("OPS_MESH_ENABLED", "0") == "1" and len(MESH_SECRE
 MESH_INTERVAL_SECONDS = max(60, int(os.environ.get("OPS_MESH_INTERVAL_SECONDS", str(DEFAULT_INTERVAL_SECONDS))))
 PROVIDER_SYNC_ENABLED = os.environ.get("OPS_PROVIDER_SYNC_ENABLED", "1") == "1"
 PROVIDER_SYNC_INTERVAL_SECONDS = max(900, int(os.environ.get("OPS_PROVIDER_SYNC_INTERVAL_SECONDS", "900")))
+PROVIDER_SYNC_HEADROOM_SECONDS = 60
 SESSION_COOKIE = "ops_session"
 SYSTEMD_CHECKS = [
     {"id": "server-desk", "name": "Server Desk", "unit": "server-desk.service", "category": "system"},
@@ -1496,13 +1497,15 @@ async def mesh_monitor_loop() -> None:
 
 async def provider_sync_loop() -> None:
     while True:
+        cycle_started_at = time.monotonic()
         try:
             await asyncio.to_thread(sync_all_provider_usage, DB_PATH, CREDENTIAL_KEY)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             print(f"provider sync failed: {exc}", file=sys.stderr, flush=True)
-        await asyncio.sleep(PROVIDER_SYNC_INTERVAL_SECONDS)
+        target_interval = max(60, PROVIDER_SYNC_INTERVAL_SECONDS - PROVIDER_SYNC_HEADROOM_SECONDS)
+        await asyncio.sleep(max(0, target_interval - (time.monotonic() - cycle_started_at)))
 
 
 @asynccontextmanager

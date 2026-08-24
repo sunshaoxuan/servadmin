@@ -1,4 +1,5 @@
 import sqlite3
+import threading
 from calendar import monthrange
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -224,6 +225,29 @@ def test_sync_all_provider_usage_runs_every_enabled_supported_server(tmp_path, m
     results = provider_sync.sync_all_provider_usage(db_path, KEY)
 
     assert synced_ids == [riven_id, orange_id]
+    assert results == [
+        {"server_id": riven_id, "status": "ok", "used_bytes": riven_id},
+        {"server_id": orange_id, "status": "ok", "used_bytes": orange_id},
+    ]
+
+
+def test_sync_all_provider_usage_runs_enabled_servers_concurrently(tmp_path, monkeypatch):
+    db_path = tmp_path / "concurrent-provider-sync.sqlite3"
+    conn = connect(db_path)
+    init_db(conn)
+    riven_id = seeded_provider(conn)
+    orange_id = seeded_orange_provider(conn)
+    conn.close()
+
+    barrier = threading.Barrier(2)
+
+    def fake_sync(_conn, _cipher, server_id):
+        barrier.wait(timeout=1)
+        return {"used_bytes": server_id}
+
+    monkeypatch.setattr(provider_sync, "sync_provider_usage", fake_sync)
+    results = provider_sync.sync_all_provider_usage(db_path, KEY)
+
     assert results == [
         {"server_id": riven_id, "status": "ok", "used_bytes": riven_id},
         {"server_id": orange_id, "status": "ok", "used_bytes": orange_id},

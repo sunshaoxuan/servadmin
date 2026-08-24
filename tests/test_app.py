@@ -194,7 +194,8 @@ def test_provider_sync_loop_runs_before_waiting(monkeypatch):
         return []
 
     async def stop_after_first_cycle(seconds):
-        assert seconds == main.PROVIDER_SYNC_INTERVAL_SECONDS
+        assert seconds <= main.PROVIDER_SYNC_INTERVAL_SECONDS - main.PROVIDER_SYNC_HEADROOM_SECONDS
+        assert seconds > main.PROVIDER_SYNC_INTERVAL_SECONDS - main.PROVIDER_SYNC_HEADROOM_SECONDS - 1
         raise asyncio.CancelledError
 
     monkeypatch.setattr(main.asyncio, "to_thread", fake_to_thread)

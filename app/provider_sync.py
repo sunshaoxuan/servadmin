@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from calendar import monthrange
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -277,7 +278,6 @@ def sync_provider_usage(
 
 def sync_all_provider_usage(db_path: str | Path, credential_key: str) -> list[dict[str, Any]]:
     conn = connect(db_path)
-    cipher = CredentialCipher(credential_key)
     try:
         rows = conn.execute(
             """
@@ -286,14 +286,31 @@ def sync_all_provider_usage(db_path: str | Path, credential_key: str) -> list[di
             order by server_id
             """
         ).fetchall()
-        results = []
-        for row in rows:
-            server_id = int(row["server_id"])
-            try:
-                result = sync_provider_usage(conn, cipher, server_id)
-                results.append({"server_id": server_id, "status": "ok", "used_bytes": result["used_bytes"]})
-            except ProviderSyncError as exc:
-                results.append({"server_id": server_id, "status": "failed", "error": str(exc)})
-        return results
+        server_ids = [int(row["server_id"]) for row in rows]
     finally:
         conn.close()
+
+    if not server_ids:
+        return []
+
+    def sync_one(server_id: int) -> dict[str, Any]:
+        server_conn = None
+        try:
+            server_conn = connect(db_path)
+            result = sync_provider_usage(server_conn, CredentialCipher(credential_key), server_id)
+            return {"server_id": server_id, "status": "ok", "used_bytes": result["used_bytes"]}
+        except ProviderSyncError as exc:
+            return {"server_id": server_id, "status": "failed", "error": str(exc)}
+        except Exception as exc:
+            return {"server_id": server_id, "status": "failed", "error": str(exc)}
+        finally:
+            if server_conn is not None:
+                server_conn.close()
+
+    results_by_server_id: dict[int, dict[str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=min(4, len(server_ids))) as executor:
+        futures = {executor.submit(sync_one, server_id): server_id for server_id in server_ids}
+        for future in as_completed(futures):
+            result = future.result()
+            results_by_server_id[int(result["server_id"])] = result
+    return [results_by_server_id[server_id] for server_id in server_ids]
