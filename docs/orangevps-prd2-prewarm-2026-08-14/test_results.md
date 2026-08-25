@@ -34,3 +34,15 @@
 - 命令：`.venv\\Scripts\\python.exe -m pytest -q --basetemp=.task\\orangevps-prd2-pytest`
 - 结果：`57 passed in 15.48s`
 - 状态：通过
+
+## 2026-08-25 体检修复验证
+
+| 测试 | 结果 | 状态 |
+| --- | --- | --- |
+| 修复前加密备份 | 服务 success，文件 126,607,392 字节 | 通过 |
+| SSH 密码凭据预检 | 目标身份匹配，真实登录成功 | 通过 |
+| 当前网络就绪 | networkd wait-online exit 0 | 通过 |
+| 历史 failed 状态清理 | 指定服务不再位于 failed 列表 | 通过 |
+| 修复后全面体检 | 89 分，访问、系统、服务、心跳均满分 | 通过 |
+| DNS 实际状态 | `nameserver 127.0.0.53`，三个 HTTPS 目标成功 | 通过 |
+| 仓库完整测试 | `66 passed in 18.78s` | 通过 |

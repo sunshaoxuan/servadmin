@@ -818,6 +818,12 @@ def test_inspect_localhost_records_config_and_services():
         os.unlink(db_path)
 
 
+def test_python_inspection_reads_nameservers_after_long_resolv_header():
+    from app.main import PYTHON_INSPECTION_SCRIPT
+
+    assert 'read_lines("/etc/resolv.conf", 256)' in PYTHON_INSPECTION_SCRIPT
+
+
 def test_build_config_report_extracts_environment_sections():
     from app.main import build_config_report
 

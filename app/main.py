@@ -719,7 +719,7 @@ print(f"addresses={addresses}")
 if shutil.which("ip"):
     print_lines(run("ip -brief address show 2>/dev/null | head -20", 5), 20)
     print_lines(run("ip route show default 2>/dev/null | head -5", 5), 5)
-for line in read_lines("/etc/resolv.conf", 20):
+for line in read_lines("/etc/resolv.conf", 256):
     if line.startswith("nameserver"):
         parts = line.split()
         if len(parts) > 1:

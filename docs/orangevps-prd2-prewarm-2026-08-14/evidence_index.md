@@ -19,5 +19,11 @@
 | E15 | 浏览器控制台 | Server Desk 页面未发现本站脚本错误，观察到的告警来自浏览器扩展 |
 | E16 | 临时敏感文件清理 | MySQL 转储、源 agent 临时副本、临时 pgpass 已删除 |
 | E17 | 临时 SSH 授权清理 | `codex-production-migration-target14` 行数为 0 |
+| E18 | 体检失败根因 | 节点 14 为 key 模式且扫描机侧 key path 为空，OpenSSH 批处理登录失败 |
+| E19 | 目标机直接采集 | 地址、默认路由、DNS 和三个 HTTPS 目标均正常 |
+| E20 | 修复前备份 | `ops.sqlite3.20260825T072237Z.enc`，备份服务成功 |
+| E21 | 认证记录修复 | auth_type 已改为 password，原加密凭据未改变 |
+| E22 | 修复后体检 | 89 分，4 项关注，访问与资源采集完整 |
+| E23 | DNS 误判根因 | nameserver 位于 resolv.conf 第 20 行之后，采集读取上限不足 |
 
 生产监控页面在 2026-08-14 通过已登录的实际生产页面完成截图核验。截图中可见新节点 `RHospital.OrangeVPS.Prd2`、IPv4 `92.113.124.185`、在线状态、当前资源读数和 `10.0 GB / 8.6 TB` 流量读数。
