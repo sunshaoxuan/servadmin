@@ -103,4 +103,5 @@ CNDRP 到新主机的快速样本平均约 45.471 ms，样本出现 16% 丢包�
 - 当前网络就绪探测成功后，仅清理 `systemd-networkd-wait-online.service` 的历史失败状态。
 - 重新体检得到 89 分。访问链路 15/15、系统资源 25/25、网络质量 18/20、服务状态 15/15、访问安全 6/15、心跳传播 10/10。
 - DNS 仍被误判的原因是 Python 采集脚本只读取 `/etc/resolv.conf` 前 20 行，systemd-resolved 的 nameserver 位于长说明头部之后。采集上限已扩大并加入回归测试。
+- Microsoft 首页正文偶发超过 6 秒下载窗口。HTTPS 可达性采集改为 HEAD 请求，并使用支持 HEAD 的 Cloudflare 主页，目标机实测三个探测点均在 0.6 秒内完成。
 - 本轮没有调整 Gate、业务容器、数据库复制、SSH 服务配置、防火墙规则或公网端口。

@@ -529,10 +529,10 @@ printf 'tcp_rmem=%s\n' "$(cat /proc/sys/net/ipv4/tcp_rmem 2>/dev/null || true)"
 printf 'tcp_wmem=%s\n' "$(cat /proc/sys/net/ipv4/tcp_wmem 2>/dev/null || true)"
 echo "__SECTION__network_quality"
 if command -v curl >/dev/null 2>&1; then
-  for target in "cloudflare=https://www.cloudflare.com/cdn-cgi/trace" "google=https://www.google.com/generate_204" "microsoft=https://www.microsoft.com"; do
+  for target in "cloudflare=https://www.cloudflare.com" "google=https://www.google.com/generate_204" "microsoft=https://www.microsoft.com"; do
     name="${target%%=*}"
     url="${target#*=}"
-    curl -o /dev/null -fsS --max-time 6 -w "${name} http=%{http_code} dns=%{time_namelookup} connect=%{time_connect} tls=%{time_appconnect} total=%{time_total} ip=%{remote_ip}\n" "$url" 2>/dev/null || printf '%s error=unreachable\n' "$name"
+    curl --head -o /dev/null -fsS --max-time 6 -w "${name} http=%{http_code} dns=%{time_namelookup} connect=%{time_connect} tls=%{time_appconnect} total=%{time_total} ip=%{remote_ip}\n" "$url" 2>/dev/null || printf '%s error=unreachable\n' "$name"
   done
 fi
 if command -v ping >/dev/null 2>&1; then
@@ -742,13 +742,13 @@ for name in ("tcp_rmem", "tcp_wmem"):
 section("network_quality")
 if shutil.which("curl"):
     targets = (
-        ("cloudflare", "https://www.cloudflare.com/cdn-cgi/trace"),
+        ("cloudflare", "https://www.cloudflare.com"),
         ("google", "https://www.google.com/generate_204"),
         ("microsoft", "https://www.microsoft.com"),
     )
     for name, url in targets:
         line = run(
-            "curl -o /dev/null -fsS --max-time 6 "
+            "curl --head -o /dev/null -fsS --max-time 6 "
             f"-w '{name} http=%{{http_code}} dns=%{{time_namelookup}} connect=%{{time_connect}} tls=%{{time_appconnect}} total=%{{time_total}} ip=%{{remote_ip}}\\n' "
             + shlex.quote(url)
             + " 2>/dev/null",

@@ -45,4 +45,5 @@
 | 历史 failed 状态清理 | 指定服务不再位于 failed 列表 | 通过 |
 | 修复后全面体检 | 89 分，访问、系统、服务、心跳均满分 | 通过 |
 | DNS 实际状态 | `nameserver 127.0.0.53`，三个 HTTPS 目标成功 | 通过 |
-| 仓库完整测试 | `66 passed in 18.78s` | 通过 |
+| 仓库完整测试 | `66 passed in 14.50s` | 通过 |
+| HTTPS HEAD 目标机验证 | Cloudflare 200、Google 204、Microsoft 200 | 通过 |

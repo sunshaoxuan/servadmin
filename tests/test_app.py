@@ -822,6 +822,8 @@ def test_python_inspection_reads_nameservers_after_long_resolv_header():
     from app.main import PYTHON_INSPECTION_SCRIPT
 
     assert 'read_lines("/etc/resolv.conf", 256)' in PYTHON_INSPECTION_SCRIPT
+    assert 'curl --head -o /dev/null -fsS --max-time 6' in PYTHON_INSPECTION_SCRIPT
+    assert '"https://www.cloudflare.com"' in PYTHON_INSPECTION_SCRIPT
 
 
 def test_build_config_report_extracts_environment_sections():
