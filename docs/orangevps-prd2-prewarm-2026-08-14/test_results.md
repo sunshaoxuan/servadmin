@@ -47,3 +47,6 @@
 | DNS 实际状态 | `nameserver 127.0.0.53`，三个 HTTPS 目标成功 | 通过 |
 | 仓库完整测试 | `66 passed in 14.50s` | 通过 |
 | HTTPS HEAD 目标机验证 | Cloudflare 200、Google 204、Microsoft 200 | 通过 |
+| 生产机仓库测试 | `66 passed in 38.58s` | 通过 |
+| 最终全面体检 | 91 分、A 级、3 项安全策略告警 | 通过 |
+| Server Desk 健康 | `/api/health` HTTP 200 | 通过 |
