@@ -27,9 +27,30 @@ async function api(path, options = {}) {
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
+    if (res.status === 401 && state.deviceAuthEnabled && !options.restored
+        && !["/api/login", "/api/logout", "/api/auth/refresh", "/api/auth/reauthenticate"].includes(path)) {
+      await restoreBrowserSession();
+      return api(path, { ...options, restored: true });
+    }
+    if (res.status === 403 && body.detail === "reauthentication_required" && !options.reauthenticated) {
+      await requestReauthentication();
+      return api(path, { ...options, reauthenticated: true });
+    }
     throw new Error(body.detail || `HTTP ${res.status}`);
   }
   return res.json();
+}
+
+let restorePending = null;
+function restoreBrowserSession() {
+  if (!restorePending) {
+    restorePending = api("/api/auth/refresh", { method: "POST" }).catch(async (error) => {
+      // Another tab may already have rotated the shared cookie. Never copy credentials.
+      const me = await api("/api/me", { restored: true });
+      if (!me.authenticated) throw error;
+    }).finally(() => { restorePending = null; });
+  }
+  return restorePending;
 }
 
 function showApp(user) {
@@ -38,7 +59,67 @@ function showApp(user) {
   $("whoami").textContent = user.username;
 }
 
+let reauthPending = null;
+let finishReauth = null;
+function requestReauthentication() {
+  if (reauthPending) return reauthPending;
+  $("reauthPassword").value = "";
+  $("reauthError").textContent = "";
+  $("reauthDialog").showModal();
+  reauthPending = new Promise((resolve, reject) => { finishReauth = { resolve, reject }; });
+  return reauthPending;
+}
+
+function endReauthentication(error) {
+  $("reauthPassword").value = "";
+  $("reauthDialog").close();
+  const pending = finishReauth;
+  finishReauth = null;
+  reauthPending = null;
+  if (pending) error ? pending.reject(error) : pending.resolve();
+}
+
+$("reauthForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const body = JSON.stringify({ password: $("reauthPassword").value });
+  $("reauthPassword").value = "";
+  try {
+    await api("/api/auth/reauthenticate", { method: "POST", body });
+    endReauthentication();
+  } catch { $("reauthError").textContent = "验证失败，请重试。"; }
+});
+$("cancelReauthBtn").addEventListener("click", () => endReauthentication(new Error("已取消")));
+$("reauthDialog").addEventListener("cancel", (event) => {
+  event.preventDefault();
+  endReauthentication(new Error("已取消"));
+});
+
+async function refreshDevices() {
+  $("deviceError").textContent = "";
+  try {
+    const devices = await api("/api/auth/devices");
+    $("deviceList").innerHTML = devices.map((d) => {
+      const expired = d.expires_at * 1000 <= Date.now();
+      const status = d.revoked_at ? "已撤销" : expired ? "已过期" : d.current ? "当前浏览器" : "有效";
+      return `<div class="section-head"><div><strong>${escapeHtml(d.label)}</strong> · ${status}<p>到期：${escapeHtml(new Date(d.expires_at * 1000).toLocaleString())}</p></div>${d.revoked_at || expired ? "" : `<button type="button" class="btn btn-light" data-revoke-device="${escapeHtml(d.id)}">撤销</button>`}</div>`;
+    }).join("") || "尚未记住任何浏览器。";
+    $("deviceList").querySelectorAll("[data-revoke-device]").forEach((button) => button.addEventListener("click", async () => {
+      button.disabled = true;
+      $("deviceError").textContent = "";
+      try {
+        await api(`/api/auth/devices/${encodeURIComponent(button.dataset.revokeDevice)}`, { method: "DELETE" });
+        const me = await api("/api/me");
+        if (!me.authenticated) showLogin();
+        else await refreshDevices();
+      } catch (error) { $("deviceError").textContent = error.message; button.disabled = false; }
+    }));
+  } catch (error) { $("deviceError").textContent = error.message; }
+}
+$("refreshDevicesBtn").addEventListener("click", refreshDevices);
+
 function showLogin() {
+  state.credentials = {};
+  state.connectionSecrets = {};
   $("appView").classList.add("hidden");
   $("loginView").classList.remove("hidden");
 }
@@ -319,6 +400,7 @@ function showTab(tab) {
   $("addBtn").classList.toggle("hidden", !serversVisible);
   $("pageTitle").textContent = settings ? "设置" : dashboardVisible ? "运行监控" : "服务器资产";
   if (settings) {
+    if (!$("devicePanel").classList.contains("hidden")) refreshDevices();
     $("summaryText").textContent = "应用和服务状态";
     refreshServices();
     return;
@@ -1413,8 +1495,10 @@ $("loginForm").addEventListener("submit", async (event) => {
   try {
     const user = await api("/api/login", {
       method: "POST",
-      body: JSON.stringify({ username: $("loginUser").value, password: $("loginPassword").value }),
+      body: JSON.stringify({ username: $("loginUser").value, password: $("loginPassword").value,
+        remember_device: $("rememberDevice").checked, device_label: $("deviceLabel").value || "我的浏览器" }),
     });
+    $("loginPassword").value = "";
     showApp(user);
     await loadAll();
   } catch {
@@ -1423,8 +1507,11 @@ $("loginForm").addEventListener("submit", async (event) => {
 });
 
 $("logoutBtn").addEventListener("click", async () => {
-  await api("/api/logout", { method: "POST" }).catch(() => {});
-  showLogin();
+  try {
+    await api("/api/logout", { method: "POST" });
+    state.credentials = {}; state.connectionSecrets = {};
+    showLogin();
+  } catch { window.alert("退出失败，请重试以确保浏览器凭据已撤销。"); }
 });
 $("refreshBtn").addEventListener("click", () => {
   if (state.activeTab === "settings") {
@@ -1619,7 +1706,16 @@ $("copyCredentialBtn").addEventListener("click", async () => {
 
 (async function init() {
   try {
-    const user = await api("/api/me");
+    let user = await api("/api/me");
+    state.deviceAuthEnabled = Boolean(user.device_auth_enabled);
+    $("rememberOptions").classList.toggle("hidden", !user.device_auth_enabled);
+    $("devicePanel").classList.toggle("hidden", !user.device_auth_enabled);
+    if (!user.authenticated && user.device_auth_enabled) {
+      try {
+        await restoreBrowserSession();
+        user = await api("/api/me");
+      } catch { /* A missing or expired browser credential uses the normal login form. */ }
+    }
     if (user.authenticated) {
       showApp(user);
       await loadAll();

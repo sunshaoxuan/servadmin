@@ -100,6 +100,33 @@ create table if not exists schema_migrations (
 
 MIGRATIONS = [
     (
+        9,
+        "opt-in remembered browsers",
+        """
+        create table if not exists remembered_devices (
+          id text primary key,
+          user_id integer not null references users(id) on delete cascade,
+          label text not null,
+          token_hash text not null,
+          previous_hash text,
+          rotated_at integer,
+          password_version text not null,
+          created_at integer not null,
+          last_used_at integer not null,
+          expires_at integer not null,
+          revoked_at integer
+        );
+        create index if not exists idx_remembered_devices_user on remembered_devices(user_id);
+        create table if not exists device_sessions (
+          token_hash text primary key,
+          device_id text not null references remembered_devices(id) on delete cascade,
+          expires_at integer not null,
+          fresh_at integer not null
+        );
+        create index if not exists idx_device_sessions_device on device_sessions(device_id);
+        """,
+    ),
+    (
         1,
         "server subscription usage",
         """

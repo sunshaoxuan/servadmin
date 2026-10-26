@@ -18,6 +18,11 @@
         <form id="loginForm" class="stack">
           <label>账号<input id="loginUser" autocomplete="username" value="admin" /></label>
           <label>密码<input id="loginPassword" type="password" autocomplete="current-password" /></label>
+          <div id="rememberOptions" class="hidden">
+            <label class="remember-choice"><input id="rememberDevice" type="checkbox" /> 记住这个浏览器（访问后顺延一个月）</label>
+            <label>浏览器名称<input id="deviceLabel" maxlength="80" value="我的浏览器" /></label>
+            <p>每次成功认证访问后，到期时间顺延一个日历月（UTC）。持续访问无需重新登录。独立浏览器线程可能不共享登录；仅在私人设备使用。</p>
+          </div>
           <button type="submit" class="btn btn-primary">登录</button>
           <div id="loginError" class="error"></div>
         </form>
@@ -355,6 +360,11 @@
         </section>
 
         <section id="settingsView" class="tab-panel hidden">
+          <section id="devicePanel" class="services-panel card hidden">
+            <div class="section-head"><div><h2>已记住的浏览器</h2><p>按浏览器独立撤销；退出会忘记当前浏览器。撤销立即阻止后续请求。</p></div>
+              <button id="refreshDevicesBtn" class="btn btn-primary" type="button">刷新列表</button></div>
+            <div id="deviceList"></div><p id="deviceError" class="error"></p>
+          </section>
           <section class="services-panel card">
             <div class="section-head">
               <div>
@@ -371,6 +381,15 @@
       </section>
     </main>
 
+    <dialog id="reauthDialog">
+      <form id="reauthForm" class="stack">
+        <h2>确认身份</h2><p>此操作需要最近 15 分钟内的密码验证。</p>
+        <label>密码<input id="reauthPassword" type="password" autocomplete="current-password" required /></label>
+        <p id="reauthError" class="error"></p>
+        <button type="submit" class="btn btn-primary">验证并继续</button>
+        <button id="cancelReauthBtn" type="button" class="btn btn-light">取消</button>
+      </form>
+    </dialog>
     <dialog id="serverDialog">
       <form id="serverForm" method="dialog" class="server-form">
         <div class="dialog-head">
@@ -451,6 +470,6 @@
       </form>
     </dialog>
 
-    <script src="static/app.js?v=20260821-provider-freshness1"></script>
+    <script src="static/app.js?v=20261026-device-auth1"></script>
   </body>
 </html>

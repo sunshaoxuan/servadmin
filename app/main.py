@@ -12,7 +12,7 @@ import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List, Optional
 from urllib.parse import urlparse
@@ -29,6 +29,7 @@ from .dashboard import dashboard_snapshot
 from .mesh import DEFAULT_INTERVAL_SECONDS, fetch_peer_report, mesh_health_history, poll_mesh_once
 from .provider_sync import ProviderSyncError, sync_all_provider_usage, sync_provider_usage
 from .security import CredentialCipher, SessionCodec, hash_password, verify_password
+from . import device_auth
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -42,6 +43,52 @@ PROVIDER_SYNC_ENABLED = os.environ.get("OPS_PROVIDER_SYNC_ENABLED", "1") == "1"
 PROVIDER_SYNC_INTERVAL_SECONDS = max(900, int(os.environ.get("OPS_PROVIDER_SYNC_INTERVAL_SECONDS", "900")))
 PROVIDER_SYNC_HEADROOM_SECONDS = 60
 SESSION_COOKIE = "ops_session"
+DEVICE_COOKIE = "ops_remember"
+DEVICE_SESSION_COOKIE = "ops_device_session"
+
+
+def device_auth_enabled():
+    return os.environ.get("OPS_DEVICE_AUTH_ENABLED", "0") == "1"
+
+
+def device_cookie_path():
+    return os.environ.get("OPS_DEVICE_COOKIE_PATH", "/")
+
+
+def set_device_cookie(response, name, value, max_age, expires=None):
+    response.set_cookie(name, value, max_age=max_age, httponly=True,
+                        secure=os.environ.get("OPS_COOKIE_SECURE", "0") == "1",
+                        samesite="strict", path=device_cookie_path(), expires=expires)
+
+
+def clear_device_cookies(response):
+    for name in (DEVICE_COOKIE, DEVICE_SESSION_COOKIE):
+        response.delete_cookie(name, path=device_cookie_path())
+
+
+def remembered_cookies(request):
+    return {name: value for name, value in request.cookies.items()
+            if name == DEVICE_COOKIE or name.startswith(DEVICE_COOKIE + "_")}
+
+
+def remembered_token(request, conn):
+    return device_auth.select_token(conn, remembered_cookies(request).values())
+
+
+def set_remembered_cookie(request, response, token, expires_at):
+    # Separate generation/deadline names protect both rotation and expiry from stale responses.
+    name = DEVICE_COOKIE + "_" + device_auth.digest(token)[:16] + "_" + str(expires_at)
+    for old_name in remembered_cookies(request):
+        if old_name != name:
+            response.delete_cookie(old_name, path=device_cookie_path())
+    set_device_cookie(response, name, token, max(0, expires_at - int(time.time())),
+                      expires=datetime.fromtimestamp(expires_at, timezone.utc))
+
+
+def forget_browser_cookies(request, response):
+    clear_device_cookies(response)
+    for name in remembered_cookies(request):
+        response.delete_cookie(name, path=device_cookie_path())
 SYSTEMD_CHECKS = [
     {"id": "server-desk", "name": "Server Desk", "unit": "server-desk.service", "category": "system"},
     {"id": "nginx", "name": "Nginx", "unit": "nginx.service", "category": "system"},
@@ -56,6 +103,12 @@ NGINX_PROXY_CONFIGS = [
 
 class LoginRequest(BaseModel):
     username: str
+    password: str
+    remember_device: bool = False
+    device_label: str = Field(default="我的浏览器", min_length=1, max_length=80)
+
+
+class ReauthenticateRequest(BaseModel):
     password: str
 
 
@@ -402,6 +455,27 @@ def _check_proxy_app(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def current_user(request: Request, conn=Depends(db)) -> dict[str, Any]:
+    managed = request.cookies.get(DEVICE_SESSION_COOKIE, "")
+    if managed:
+        user = device_auth.authenticate(conn, managed) if device_auth_enabled() else None
+        if not user:
+            raise HTTPException(status_code=401, detail="not authenticated")
+        path = request.url.path
+        sensitive = (path.endswith(("/credential", "/connection-secret", "/inspect", "/quality-check"))
+                     or (request.method == "DELETE" and path.startswith("/api/auth/devices/"))
+                     or (request.method == "POST" and path == "/api/servers")
+                     or (request.method == "DELETE"
+                         and re.fullmatch(r"/api/servers/\d+", path) is not None))
+        if sensitive and user["fresh_at"] + device_auth.FRESH_TTL <= int(time.time()):
+            raise HTTPException(status_code=403, detail="reauthentication_required")
+        token = remembered_token(request, conn)
+        extend = path != "/api/auth/reauthenticate"
+        renewed = device_auth.renew_access(conn, managed, token, extend=extend)
+        if not renewed:
+            raise HTTPException(401, "not authenticated")
+        if extend:
+            request.state.device_renewal = (token, renewed[1])
+        return user
     token = request.cookies.get(SESSION_COOKIE, "")
     user_id = session_codec().verify(token)
     if not user_id:
@@ -1536,7 +1610,18 @@ app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 
 @app.middleware("http")
 async def add_cache_headers(request: Request, call_next):
+    # Browser requests carry this header; SameSite alone is insufficient for sibling subdomains.
+    if (device_auth_enabled() and request.method not in {"GET", "HEAD", "OPTIONS"}
+            and request.url.path.startswith("/api/")
+            and request.headers.get("sec-fetch-site") in {"cross-site", "same-site"}):
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"detail": "same-origin request required"}, status_code=403)
     response = await call_next(request)
+    renewal = getattr(request.state, "device_renewal", None)
+    if renewal:
+        set_remembered_cookie(request, response, renewal[0], renewal[1])
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
     if request.url.path == "/" or request.url.path.startswith("/static/"):
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
@@ -1583,24 +1668,48 @@ def dashboard(user=Depends(current_user), conn=Depends(db)):
 
 @app.get("/api/me")
 def me(request: Request, conn=Depends(db)):
+    capabilities = {"device_auth_enabled": True} if device_auth_enabled() else {}
+    if request.cookies.get(DEVICE_SESSION_COOKIE):
+        try:
+            user = current_user(request, conn)
+        except HTTPException as exc:
+            if exc.status_code != 401:
+                raise
+            user = None
+        return {**(user or {}), **capabilities, "authenticated": bool(user)}
     token = request.cookies.get(SESSION_COOKIE, "")
     user_id = session_codec().verify(token)
     if not user_id:
-        return {"authenticated": False}
+        return {"authenticated": False, **capabilities}
     row = conn.execute("select id, username from users where id = ?", (user_id,)).fetchone()
     if not row:
-        return {"authenticated": False}
-    return {**dict(row), "authenticated": True}
+        return {"authenticated": False, **capabilities}
+    return {**dict(row), "authenticated": True, **capabilities}
 
 
 @app.post("/api/login")
-def login(payload: LoginRequest, response: Response, conn=Depends(db)):
+def login(payload: LoginRequest, request: Request, response: Response, conn=Depends(db)):
     row = conn.execute(
         "select id, username, password_hash, password_salt from users where username = ?",
         (payload.username,),
     ).fetchone()
     if not row or not verify_password(payload.password, row["password_hash"], row["password_salt"]):
         raise HTTPException(status_code=401, detail="invalid credentials")
+    if payload.remember_device:
+        if not device_auth_enabled():
+            raise HTTPException(409, "remembered browsers are disabled")
+        token, session, expires_at = device_auth.enroll(
+            conn, row, payload.device_label.strip() or "我的浏览器", remembered_token(request, conn))
+        set_remembered_cookie(request, response, token, expires_at)
+        set_device_cookie(response, DEVICE_SESSION_COOKIE, session, device_auth.SESSION_TTL)
+        response.delete_cookie(SESSION_COOKIE)
+        audit(conn, row["username"], "remember_browser", "user", row["id"])
+        return {"ok": True, "username": row["username"]}
+    # A password login can replace a remembered login; forget this browser first.
+    remembered = device_auth.split_token(remembered_token(request, conn))
+    if remembered and device_auth_enabled():
+        device_auth.revoke(conn, row["id"], remembered[0])
+    forget_browser_cookies(request, response)
     response.set_cookie(
         SESSION_COOKIE,
         session_codec().sign(row["id"]),
@@ -1614,8 +1723,77 @@ def login(payload: LoginRequest, response: Response, conn=Depends(db)):
 
 
 @app.post("/api/logout")
-def logout(response: Response, user=Depends(current_user)):
+def logout(request: Request, response: Response, conn=Depends(db)):
+    # Idempotent even after expiry; valid refresh credentials can still be revoked.
+    parsed = device_auth.split_token(remembered_token(request, conn))
+    if parsed and device_auth_enabled():
+        row = conn.execute("select * from remembered_devices where id=?", (parsed[0],)).fetchone()
+        if row and parsed[1] in {row["token_hash"], row["previous_hash"]}:
+            device_auth.revoke(conn, row["user_id"], row["id"])
     response.delete_cookie(SESSION_COOKIE)
+    forget_browser_cookies(request, response)
+    return {"ok": True}
+
+
+@app.post("/api/auth/refresh")
+def refresh_device(request: Request, response: Response, conn=Depends(db)):
+    if not device_auth_enabled():
+        raise HTTPException(404, "disabled")
+    token, session, expires_at = device_auth.refresh(conn, remembered_token(request, conn))
+    set_remembered_cookie(request, response, token, expires_at)
+    set_device_cookie(response, DEVICE_SESSION_COOKIE, session, device_auth.SESSION_TTL)
+    response.delete_cookie(SESSION_COOKIE)
+    return {"ok": True}
+
+
+@app.post("/api/auth/reauthenticate")
+def reauthenticate(payload: ReauthenticateRequest, request: Request, response: Response,
+                   user=Depends(current_user), conn=Depends(db)):
+    row = conn.execute("select * from users where id=?", (user["id"],)).fetchone()
+    if not verify_password(payload.password, row["password_hash"], row["password_salt"]):
+        raise HTTPException(401, "invalid credentials")
+    if user.get("device_id"):
+        # Rotate the short session too; previous session gains no elevated access.
+        old_hash = device_auth.digest(request.cookies[DEVICE_SESSION_COOKIE])
+        now = int(time.time())
+        conn.execute("begin immediate")
+        if not device_auth.active_device(conn, user["device_id"], now):
+            conn.rollback()
+            raise HTTPException(401, "not authenticated")
+        conn.execute("delete from device_sessions where token_hash=?", (old_hash,))
+        session = device_auth.new_session(conn, user["device_id"], now, now)
+        conn.commit()
+        set_device_cookie(response, DEVICE_SESSION_COOKIE, session, device_auth.SESSION_TTL)
+        token = remembered_token(request, conn)
+        renewed = device_auth.renew_access(conn, session, token)
+        if not renewed:
+            raise HTTPException(401, "not authenticated")
+        request.state.device_renewal = (token, renewed[1])
+    audit(conn, user["username"], "reauthenticate", "user", user["id"])
+    return {"ok": True}
+
+
+@app.get("/api/auth/devices")
+def list_devices(user=Depends(current_user), conn=Depends(db)):
+    if not device_auth_enabled():
+        raise HTTPException(404, "disabled")
+    rows = conn.execute(
+        """select id,label,created_at,last_used_at,expires_at,revoked_at from remembered_devices
+           where user_id=? order by created_at desc""", (user["id"],),
+    ).fetchall()
+    return [{**dict(row), "current": row["id"] == user.get("device_id")} for row in rows]
+
+
+@app.delete("/api/auth/devices/{device_id}")
+def revoke_device(device_id: str, request: Request, response: Response, user=Depends(current_user), conn=Depends(db)):
+    if not device_auth_enabled():
+        raise HTTPException(404, "disabled")
+    if not device_auth.revoke(conn, user["id"], device_id):
+        raise HTTPException(404, "browser not found")
+    if device_id == user.get("device_id"):
+        request.state.device_renewal = None
+        forget_browser_cookies(request, response)
+    audit(conn, user["username"], "revoke_browser", "user", user["id"], device_id)
     return {"ok": True}
 
 
@@ -1676,6 +1854,19 @@ def update_server(server_id: int, payload: ServerPayload, user=Depends(current_u
     row = conn.execute("select * from servers where id = ?", (server_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="server not found")
+    if user.get("device_id") and user["fresh_at"] + device_auth.FRESH_TTL <= int(time.time()):
+        old = server_response(conn, row)
+        security_fields = (
+            "hostname", "ipv4", "ipv6", "provider", "login_user", "auth_type", "ssh_host", "ssh_port",
+            "ssh_key_path", "ssh_local_key_path", "ssh_windows_key_path", "ssh_options", "panel_url",
+            "panel_username", "is_retired", "heartbeat_enabled", "heartbeat_port", "provider_portal_url",
+            "provider_username", "provider_service_id", "provider_server_id", "provider_connector", "provider_sync_enabled",
+        )
+        security_changed = any(getattr(payload, key) is not None
+                               and (getattr(payload, key) or "") != (old.get(key) or "")
+                               for key in security_fields)
+        if security_changed or payload.credential or payload.panel_password or payload.provider_password:
+            raise HTTPException(403, "reauthentication_required")
     credential = row["credential_encrypted"] if payload.credential == "" else c.encrypt(payload.credential)
     panel_password = row["panel_password_encrypted"] if payload.panel_password == "" else c.encrypt(payload.panel_password)
     conn.execute(

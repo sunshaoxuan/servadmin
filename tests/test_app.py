@@ -671,7 +671,7 @@ def test_static_and_index_are_not_cached():
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
         assert "static/styles.css?v=20260821-provider-freshness2" in response.text
-        assert "static/app.js?v=20260821-provider-freshness1" in response.text
+        assert "static/app.js?v=20261026-device-auth1" in response.text
         assert 'id="trafficUsedGb" type="number" min="0" step="any"' in response.text
         assert 'id="trafficQuotaGb" type="number" min="0.000000001" step="any"' in response.text
         assert 'id="trafficNextResetAt"' in response.text
