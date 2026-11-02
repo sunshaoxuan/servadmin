@@ -32,10 +32,6 @@ async function api(path, options = {}) {
       await restoreBrowserSession();
       return api(path, { ...options, restored: true });
     }
-    if (res.status === 403 && body.detail === "reauthentication_required" && !options.reauthenticated) {
-      await requestReauthentication();
-      return api(path, { ...options, reauthenticated: true });
-    }
     throw new Error(body.detail || `HTTP ${res.status}`);
   }
   return res.json();
@@ -58,41 +54,6 @@ function showApp(user) {
   $("appView").classList.remove("hidden");
   $("whoami").textContent = user.username;
 }
-
-let reauthPending = null;
-let finishReauth = null;
-function requestReauthentication() {
-  if (reauthPending) return reauthPending;
-  $("reauthPassword").value = "";
-  $("reauthError").textContent = "";
-  $("reauthDialog").showModal();
-  reauthPending = new Promise((resolve, reject) => { finishReauth = { resolve, reject }; });
-  return reauthPending;
-}
-
-function endReauthentication(error) {
-  $("reauthPassword").value = "";
-  $("reauthDialog").close();
-  const pending = finishReauth;
-  finishReauth = null;
-  reauthPending = null;
-  if (pending) error ? pending.reject(error) : pending.resolve();
-}
-
-$("reauthForm").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const body = JSON.stringify({ password: $("reauthPassword").value });
-  $("reauthPassword").value = "";
-  try {
-    await api("/api/auth/reauthenticate", { method: "POST", body });
-    endReauthentication();
-  } catch { $("reauthError").textContent = "验证失败，请重试。"; }
-});
-$("cancelReauthBtn").addEventListener("click", () => endReauthentication(new Error("已取消")));
-$("reauthDialog").addEventListener("cancel", (event) => {
-  event.preventDefault();
-  endReauthentication(new Error("已取消"));
-});
 
 async function refreshDevices() {
   $("deviceError").textContent = "";
@@ -1496,7 +1457,7 @@ $("loginForm").addEventListener("submit", async (event) => {
     const user = await api("/api/login", {
       method: "POST",
       body: JSON.stringify({ username: $("loginUser").value, password: $("loginPassword").value,
-        remember_device: $("rememberDevice").checked, device_label: $("deviceLabel").value || "我的浏览器" }),
+        remember_device: Boolean(state.deviceAuthEnabled), device_label: $("deviceLabel").value || "我的浏览器" }),
     });
     $("loginPassword").value = "";
     showApp(user);
