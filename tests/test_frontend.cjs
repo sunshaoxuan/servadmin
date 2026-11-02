@@ -46,7 +46,7 @@ test("expired concurrent API calls share one browser restore and retry without a
   const results = await vm.runInContext('Promise.all([api("/api/servers"), api("/api/dashboard")])', context);
   assert.equal(restores, 1);
   assert.ok(results.every((r) => r.restored));
-  assert.equal(vm.runInContext("reauthPending", context), null);
+  assert.equal(vm.runInContext("typeof requestReauthentication", context), "undefined");
 });
 
 test("a wrong password does not trigger saved-browser restore", async () => {
@@ -59,4 +59,15 @@ test("a wrong password does not trigger saved-browser restore", async () => {
   vm.runInContext("state.deviceAuthEnabled = true", context);
   await assert.rejects(vm.runInContext('api("/api/login", {method:"POST"})', context));
   assert.equal(requests, 1);
+});
+
+test("ordinary forbidden responses do not open a password challenge", async () => {
+  let calls = 0;
+  const context = authHarness(async () => {
+    calls++;
+    return { ok: false, status: 403, json: async () => ({ detail: "forbidden" }) };
+  });
+  await assert.rejects(vm.runInContext('api("/api/servers")', context), /forbidden/);
+  assert.equal(calls, 1);
+  assert.equal(vm.runInContext("typeof requestReauthentication", context), "undefined");
 });
