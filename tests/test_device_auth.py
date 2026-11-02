@@ -38,40 +38,6 @@ def remembered(client):
     return next(cookie.value for cookie in client.cookies.jar if cookie.name.startswith("ops_remember_"))
 
 
-@pytest.mark.parametrize("extra", [{}, {"remember_device": False}])
-def test_normal_login_defaults_to_sliding_month(setup, extra):
-    main, client = setup
-    response = client.post("/api/login", json={"username": "admin", "password": "test-only-password", **extra})
-    assert response.status_code == 200
-    assert main.DEVICE_SESSION_COOKIE in client.cookies
-    assert main.SESSION_COOKIE not in client.cookies
-    assert remembered(client)
-    assert client.get("/api/me").json()["authenticated"]
-
-
-def test_idle_month_is_measured_from_last_access_and_cannot_be_restored(setup, monkeypatch):
-    main, client = setup
-    assert login(client, False).status_code == 200
-    conn = connect(main.DB_PATH)
-    initial = conn.execute("select * from remembered_devices").fetchone()
-    clock = [initial["created_at"] + 3600]
-    monkeypatch.setattr(device_auth.time, "time", lambda: clock[0])
-    assert client.get("/api/servers").status_code == 200
-    renewed = conn.execute("select * from remembered_devices").fetchone()
-    assert renewed["expires_at"] == device_auth.month_later(clock[0]) > initial["expires_at"]
-    # Short session expiry restores silently, without another password.
-    clock[0] = initial["created_at"] + device_auth.SESSION_TTL + 1
-    assert client.get("/api/servers").status_code == 401
-    assert client.post("/api/auth/refresh").status_code == 200
-    assert client.get("/api/servers/1/credential").status_code == 404
-    last = conn.execute("select * from remembered_devices").fetchone()
-    clock[0] = last["expires_at"]
-    assert client.post("/api/auth/refresh").status_code == 401
-    assert not client.get("/api/me").json()["authenticated"]
-    assert conn.execute("select expires_at from remembered_devices").fetchone()[0] == last["expires_at"]
-    conn.close()
-
-
 def test_opt_in_disabled_and_legacy_compatibility(setup, monkeypatch):
     main, client = setup
     monkeypatch.setenv("OPS_DEVICE_AUTH_ENABLED", "0")
@@ -104,7 +70,7 @@ def test_hashes_only_cookie_flags_and_metadata(setup, monkeypatch):
     assert raw not in client.get("/api/audit").text
 
 
-def test_restore_rotates_without_requiring_password_again(setup):
+def test_restore_rotates_and_requires_password_for_sensitive_operations(setup):
     main, client = setup
     assert login(client).status_code == 200
     old = remembered(client)
@@ -113,9 +79,9 @@ def test_restore_rotates_without_requiring_password_again(setup):
     assert client.post("/api/auth/refresh").status_code == 200
     assert old != remembered(client)
     assert client.get("/api/servers").status_code == 200
-    assert client.get("/api/servers/1/credential").status_code == 404
-    assert client.get("/api/servers/1/connection-secret").status_code == 404
-    assert client.post("/api/servers/1/inspect").status_code == 404
+    assert client.get("/api/servers/1/credential").status_code == 403
+    assert client.get("/api/servers/1/connection-secret").status_code == 403
+    assert client.post("/api/servers/1/inspect").status_code == 403
     # Ordinary non-sensitive operations do not require the password again.
     assert client.post("/api/servers/1/check").status_code == 404
     assert client.post("/api/servers/1/provider-sync").status_code == 502  # missing fixture server; no connector runs
@@ -266,17 +232,16 @@ def test_refresh_revoke_race_cannot_resurrect_browser(setup):
     conn.close()
 
 
-def test_past_fifteen_minutes_no_challenge_and_revoke_ownership(setup, monkeypatch):
+def test_fresh_auth_window_and_revoke_ownership(setup, monkeypatch):
     main, client = setup
     login(client)
     conn = connect(main.DB_PATH)
     row = conn.execute("select * from remembered_devices").fetchone()
     assert not device_auth.revoke(conn, 999, row["id"])
     assert client.get("/api/servers/1/credential").status_code == 404
-    monkeypatch.setattr(device_auth.time, "time", lambda: row["created_at"] + 15 * 60)
-    assert client.get("/api/servers/1/credential").status_code == 404
-    assert client.delete(f'/api/auth/devices/{row["id"]}').status_code == 200
-    assert client.get("/api/servers").status_code == 401
+    monkeypatch.setattr(device_auth.time, "time", lambda: row["created_at"] + device_auth.FRESH_TTL)
+    assert client.get("/api/servers/1/credential").status_code == 403
+    assert client.delete(f'/api/auth/devices/{row["id"]}').status_code == 403
     conn.close()
 
 
@@ -442,7 +407,7 @@ def test_delayed_same_secret_response_cannot_shorten_cross_month_cookie(setup, m
     assert len(cookies) == 1 and cookies[0].expires >= expected
 
 
-def test_restored_session_can_edit_and_delete_without_password_challenge(setup):
+def test_metadata_edits_without_step_up_but_security_edits_require_it(setup):
     main, client = setup
     login(client)
     response = client.post("/api/servers", json={"name": "fake", "hostname": "fake.invalid", "login_user": "test"})
@@ -454,8 +419,8 @@ def test_restored_session_can_edit_and_delete_without_password_challenge(setup):
     saved["notes"] = "ordinary metadata edit"
     assert client.put(f"/api/servers/{server_id}", json=saved).status_code == 200
     saved["credential"] = "fake-only-replacement"
-    assert client.put(f"/api/servers/{server_id}", json=saved).status_code == 200
+    assert client.put(f"/api/servers/{server_id}", json=saved).status_code == 403
     saved.pop("credential")
     saved["ssh_host"] = "different.invalid"
-    assert client.put(f"/api/servers/{server_id}", json=saved).status_code == 200
-    assert client.delete(f"/api/servers/{server_id}").status_code == 200
+    assert client.put(f"/api/servers/{server_id}", json=saved).status_code == 403
+    assert client.delete(f"/api/servers/{server_id}").status_code == 403

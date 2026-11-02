@@ -224,7 +224,7 @@ def test_sync_all_provider_usage_runs_every_enabled_supported_server(tmp_path, m
     monkeypatch.setattr(provider_sync, "sync_provider_usage", fake_sync)
     results = provider_sync.sync_all_provider_usage(db_path, KEY)
 
-    assert sorted(synced_ids) == [riven_id, orange_id]
+    assert synced_ids == [riven_id, orange_id]
     assert results == [
         {"server_id": riven_id, "status": "ok", "used_bytes": riven_id},
         {"server_id": orange_id, "status": "ok", "used_bytes": orange_id},

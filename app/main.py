@@ -461,6 +461,13 @@ def current_user(request: Request, conn=Depends(db)) -> dict[str, Any]:
         if not user:
             raise HTTPException(status_code=401, detail="not authenticated")
         path = request.url.path
+        sensitive = (path.endswith(("/credential", "/connection-secret", "/inspect", "/quality-check"))
+                     or (request.method == "DELETE" and path.startswith("/api/auth/devices/"))
+                     or (request.method == "POST" and path == "/api/servers")
+                     or (request.method == "DELETE"
+                         and re.fullmatch(r"/api/servers/\d+", path) is not None))
+        if sensitive and user["fresh_at"] + device_auth.FRESH_TTL <= int(time.time()):
+            raise HTTPException(status_code=403, detail="reauthentication_required")
         token = remembered_token(request, conn)
         extend = path != "/api/auth/reauthenticate"
         renewed = device_auth.renew_access(conn, managed, token, extend=extend)
@@ -1688,11 +1695,9 @@ def login(payload: LoginRequest, request: Request, response: Response, conn=Depe
     ).fetchone()
     if not row or not verify_password(payload.password, row["password_hash"], row["password_salt"]):
         raise HTTPException(status_code=401, detail="invalid credentials")
-    if payload.remember_device and not device_auth_enabled():
-        raise HTTPException(409, "remembered browsers are disabled")
-    # Every login uses the sliding idle-month policy when browser sessions are enabled.
-    # Accept the old opt-in field for compatibility with already loaded clients.
-    if device_auth_enabled():
+    if payload.remember_device:
+        if not device_auth_enabled():
+            raise HTTPException(409, "remembered browsers are disabled")
         token, session, expires_at = device_auth.enroll(
             conn, row, payload.device_label.strip() or "我的浏览器", remembered_token(request, conn))
         set_remembered_cookie(request, response, token, expires_at)
@@ -1849,6 +1854,19 @@ def update_server(server_id: int, payload: ServerPayload, user=Depends(current_u
     row = conn.execute("select * from servers where id = ?", (server_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="server not found")
+    if user.get("device_id") and user["fresh_at"] + device_auth.FRESH_TTL <= int(time.time()):
+        old = server_response(conn, row)
+        security_fields = (
+            "hostname", "ipv4", "ipv6", "provider", "login_user", "auth_type", "ssh_host", "ssh_port",
+            "ssh_key_path", "ssh_local_key_path", "ssh_windows_key_path", "ssh_options", "panel_url",
+            "panel_username", "is_retired", "heartbeat_enabled", "heartbeat_port", "provider_portal_url",
+            "provider_username", "provider_service_id", "provider_server_id", "provider_connector", "provider_sync_enabled",
+        )
+        security_changed = any(getattr(payload, key) is not None
+                               and (getattr(payload, key) or "") != (old.get(key) or "")
+                               for key in security_fields)
+        if security_changed or payload.credential or payload.panel_password or payload.provider_password:
+            raise HTTPException(403, "reauthentication_required")
     credential = row["credential_encrypted"] if payload.credential == "" else c.encrypt(payload.credential)
     panel_password = row["panel_password_encrypted"] if payload.panel_password == "" else c.encrypt(payload.panel_password)
     conn.execute(

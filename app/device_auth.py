@@ -1,4 +1,4 @@
-"""Revocable sliding-month browser sessions. No secrets are persisted or returned in JSON."""
+"""Opt-in remembered browsers. No secrets are persisted or returned in JSON."""
 from __future__ import annotations
 
 import hashlib
@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 
 SESSION_TTL = 12 * 3600
+FRESH_TTL = 15 * 60
 ROTATION_GRACE = 30
 
 
